@@ -27,7 +27,7 @@ def _headers() -> dict:
     return {"authorization": os.getenv("ASSEMBLYAI_API_KEY", "")}
 
 
-def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> str:
+def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> TranscriptResult:
     if not os.getenv("ASSEMBLYAI_API_KEY"):
         return TranscriptResult(text=mocks.MOCK_TRANSCRIPT, detected_language=None)
 

@@ -4,7 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 try:
-    from langdetect import detect as _langdetect, LangDetectException
+    from langdetect import detect as _langdetect
     from langdetect import DetectorFactory as _DetectorFactory
     _DetectorFactory.seed = 0
     _LANGDETECT_AVAILABLE = True

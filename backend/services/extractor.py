@@ -103,7 +103,6 @@ def extract(raw_post: RawPost, transcript: Optional[str]) -> list[ExtractedPlace
     tool_schema = ExtractionResult.model_json_schema()
     client = _get_client()
 
-    response = None
     for attempt in range(3):
         try:
             response = client.messages.create(
@@ -129,6 +128,8 @@ def extract(raw_post: RawPost, transcript: Optional[str]) -> list[ExtractedPlace
                 except Exception:
                     pass
             time.sleep(min(retry_after, 30))
+    else:
+        raise RuntimeError("Anthropic API failed after retries")
 
     for block in response.content:
         if block.type == "tool_use" and block.name == "extract_places":
