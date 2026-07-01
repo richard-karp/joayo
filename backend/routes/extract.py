@@ -100,6 +100,7 @@ def process_job(job_id: str, posts: list[dict]):
         cdn_url_hits: dict[str, int] = {}
         seen_cdn_urls: set[str] = set()
         warnings = list(job.warnings or [])
+        geocode_cache: dict[tuple[str, str | None], tuple[float | None, float | None, str | None]] = {}
 
         # On resume after CDN collision, start with transcription already disabled
         transcription_disabled = any(w["code"] == "cdn_collision" for w in warnings)
@@ -272,10 +273,19 @@ def process_job(job_id: str, posts: list[dict]):
 
             for extracted_place in places:
                 try:
-                    lat, lng = (
-                        geocoder.geocode(extracted_place.location_name, country=extracted_place.country)
-                        if extracted_place.is_place else (None, None)
-                    )
+                    if extracted_place.is_place:
+                        cache_key = (extracted_place.location_name, extracted_place.country)
+                        if cache_key in geocode_cache:
+                            lat, lng, geocoder_city = geocode_cache[cache_key]
+                        else:
+                            lat, lng, geocoder_city = geocoder.geocode_with_city(
+                                extracted_place.location_name, country=extracted_place.country
+                            )
+                            geocode_cache[cache_key] = (lat, lng, geocoder_city)
+                        if extracted_place.city is None and geocoder_city:
+                            extracted_place.city = geocoder_city
+                    else:
+                        lat, lng = None, None
                     place_id, _ = deduplicator.find_or_merge_place(
                         extracted_place, raw_post, lat, lng, job_id, session,
                         transcript=transcript,

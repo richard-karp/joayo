@@ -151,6 +151,14 @@ def find_or_merge_place(
         ):
             existing.primary_author_profile_url = raw_post.author_profile_url
 
+        # Fill in missing geocoords and city from this extraction
+        if existing.lat is None and lat is not None:
+            existing.lat = lat
+        if existing.lng is None and lng is not None:
+            existing.lng = lng
+        if existing.city is None and extracted.city is not None:
+            existing.city = extracted.city
+
         session.commit()
         return existing.id, False
 

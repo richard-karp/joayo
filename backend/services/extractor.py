@@ -1,11 +1,20 @@
-import json
 import os
+import time
 from typing import Optional
 
 import anthropic
 
 from schemas import ExtractedPlace, ExtractionResult
 from services.raw_post import RawPost
+
+_client: anthropic.Anthropic | None = None
+
+
+def _get_client() -> anthropic.Anthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    return _client
 
 _SYSTEM_PROMPT = """You are a travel content extraction assistant. Given a social media post, extract all notable items mentioned — including places, dishes, products, experiences, and services.
 
@@ -88,25 +97,41 @@ def extract(raw_post: RawPost, transcript: Optional[str]) -> list[ExtractedPlace
 
     user_content = "\n\n".join(content_parts)
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not os.getenv("ANTHROPIC_API_KEY"):
         return _mock_extract()
 
     tool_schema = ExtractionResult.model_json_schema()
+    client = _get_client()
 
-    client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        system=_SYSTEM_PROMPT,
-        tools=[{
-            "name": "extract_places",
-            "description": "Extract all named places from the social media post content.",
-            "input_schema": tool_schema,
-        }],
-        tool_choice={"type": "tool", "name": "extract_places"},
-        messages=[{"role": "user", "content": user_content}],
-    )
+    response = None
+    for attempt in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=4096,
+                system=_SYSTEM_PROMPT,
+                tools=[{
+                    "name": "extract_places",
+                    "description": "Extract all named places from the social media post content.",
+                    "input_schema": tool_schema,
+                }],
+                tool_choice={"type": "tool", "name": "extract_places"},
+                messages=[{"role": "user", "content": user_content}],
+            )
+            break
+        except anthropic.APIStatusError as e:
+            if e.status_code not in (429, 529) or attempt >= 2:
+                raise
+            retry_after = 30
+            if e.status_code == 429:
+                try:
+                    retry_after = int(e.response.headers.get("retry-after", 30))
+                except Exception:
+                    pass
+            time.sleep(min(retry_after, 30))
+
+    if response is None:
+        return []
 
     for block in response.content:
         if block.type == "tool_use" and block.name == "extract_places":

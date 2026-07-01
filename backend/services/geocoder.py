@@ -68,13 +68,17 @@ def _kakao_full(location_name: str) -> tuple[float | None, float | None, str | N
 
 def _nominatim_geocode(location_name: str, country: str | None) -> tuple[float | None, float | None]:
     query = f"{location_name}, {country}" if country else location_name
-    try:
-        time.sleep(1)  # Nominatim TOS: 1 req/sec
-        loc = _nominatim.geocode(query, timeout=10)
-        if loc:
-            return loc.latitude, loc.longitude
-    except (GeocoderTimedOut, GeocoderServiceError):
-        pass
+    for attempt in range(2):
+        try:
+            time.sleep(1)  # Nominatim TOS: 1 req/sec
+            loc = _nominatim.geocode(query, timeout=10)
+            return (loc.latitude, loc.longitude) if loc else (None, None)
+        except GeocoderTimedOut:
+            if attempt == 0:
+                time.sleep(3)
+                continue
+        except GeocoderServiceError:
+            break
     return None, None
 
 
