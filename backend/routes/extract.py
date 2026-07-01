@@ -59,11 +59,11 @@ def _pause_job(job, session, remaining_posts, reason_code, reason_message,
 
 
 def _upsert_cdn_cache(session, cdn_url: str, job_id: str):
-    from datetime import datetime
+    from datetime import datetime, timezone
     entry = session.get(CdnUrlCache, cdn_url)
     if entry:
         entry.hit_count += 1
-        entry.last_seen_at = datetime.utcnow()
+        entry.last_seen_at = datetime.now(timezone.utc)
     else:
         entry = CdnUrlCache(cdn_url=cdn_url, hit_count=1, first_seen_job_id=job_id)
         session.add(entry)
@@ -171,7 +171,6 @@ def process_job(job_id: str, posts: list[dict]):
                         job.warnings = warnings
                         session.commit()
                     transcript_missing = True
-                    continue
 
                 if cdn_url in seen_cdn_urls:
                     transcript_missing = True
@@ -215,7 +214,6 @@ def process_job(job_id: str, posts: list[dict]):
                                 "reason": "no_transcript_thin_caption",
                             })
                             job.pending_review = pending_review
-                            session.commit()
                             job.processed = (job.processed or 0) + 1
                             session.commit()
                             continue
@@ -226,7 +224,6 @@ def process_job(job_id: str, posts: list[dict]):
                 if not transcript_missing:
                     pending_review.append({"url": url, "reason": "no_transcript_thin_caption"})
                     job.pending_review = pending_review
-                    session.commit()
                     job.processed = (job.processed or 0) + 1
                     session.commit()
                     continue
@@ -287,6 +284,10 @@ def process_job(job_id: str, posts: list[dict]):
         session.commit()
 
     except Exception as e:
+        try:
+            session.rollback()
+        except Exception:
+            pass
         job = session.get(Job, job_id)
         if job:
             job.status = "complete_with_errors"

@@ -22,10 +22,14 @@ export default function JobStatus({ jobId, onComplete, onPlacesUpdate }: Props) 
 
   useEffect(() => {
     completedRef.current = false;
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout>;
 
     async function poll() {
+      if (cancelled) return;
       try {
         const data = await getJob(jobId);
+        if (cancelled) return;
         setJob(data);
 
         if (data.places.length > 0) {
@@ -42,18 +46,23 @@ export default function JobStatus({ jobId, onComplete, onPlacesUpdate }: Props) 
 
         if (data.status === "paused") return;
 
-        setTimeout(poll, 2000);
+        timerId = setTimeout(poll, 2000);
       } catch {
-        setTimeout(poll, 3000);
+        if (!cancelled) timerId = setTimeout(poll, 3000);
       }
     }
 
     poll();
+    return () => { cancelled = true; clearTimeout(timerId); };
   }, [jobId, onComplete, onPlacesUpdate, pollTick]);
 
   async function handleResume() {
-    await resumeJob(jobId);
+    await resumeJob(jobId).catch((e) => console.error("Resume failed:", e));
     setPollTick((t) => t + 1);
+  }
+
+  async function handleCancel() {
+    await cancelJob(jobId).catch((e) => console.error("Cancel failed:", e));
   }
 
   if (!job) {
@@ -88,7 +97,7 @@ export default function JobStatus({ jobId, onComplete, onPlacesUpdate }: Props) 
           </span>
           {!done && !paused && (
             <button
-              onClick={() => cancelJob(jobId)}
+              onClick={handleCancel}
               className="text-xs text-red-500 hover:text-red-700 border border-red-200 hover:border-red-400 rounded px-2 py-0.5 transition-colors"
             >
               Stop
@@ -167,7 +176,7 @@ export default function JobStatus({ jobId, onComplete, onPlacesUpdate }: Props) 
               {job.paused_reason === "cdn_collision" ? "Continue (caption-only)" : "Resume"}
             </button>
             <button
-              onClick={() => cancelJob(jobId)}
+              onClick={handleCancel}
               className="text-xs font-medium text-amber-800 hover:text-amber-900 border border-amber-300 hover:border-amber-400 rounded px-3 py-1.5 transition-colors"
             >
               Abandon

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,7 +30,7 @@ def vote_on_place(place_id: str, body: VoteRequest, db: Session = Depends(get_db
         value = 1 if body.vote == "up" else -1
         if existing:
             existing.value = value
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(timezone.utc)
         else:
             db.add(Vote(
                 id=str(uuid4()),

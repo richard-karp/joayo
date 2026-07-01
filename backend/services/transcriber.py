@@ -37,7 +37,7 @@ def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> str:
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", "60"))
                 if attempt < max_rate_limit_retries - 1:
-                    time.sleep(retry_after)
+                    time.sleep(min(retry_after, 30))
                     continue
                 raise RateLimitError(
                     f"AssemblyAI rate limited on submission after {max_rate_limit_retries} attempts "

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey,
     Integer, JSON, String, UniqueConstraint,
@@ -20,7 +20,7 @@ class Job(Base):
     warnings         = Column(JSON, default=list)           # [{"code":..., "message":...}]
     paused_reason    = Column(String, nullable=True)         # code that triggered the pause
     remaining_posts  = Column(JSON, default=list)           # posts not yet processed when paused
-    created_at       = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Place(Base):
@@ -59,7 +59,7 @@ class Place(Base):
     tagged_accounts    = Column(JSON)
     transcript         = Column(String, nullable=True)
     transcript_missing = Column(Boolean, default=False)
-    created_at         = Column(DateTime, default=datetime.utcnow)
+    created_at         = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class CdnUrlCache(Base):
@@ -74,7 +74,7 @@ class CdnUrlCache(Base):
     cdn_url           = Column(String, primary_key=True)
     hit_count         = Column(Integer, default=1)
     first_seen_job_id = Column(String, ForeignKey("jobs.id"), nullable=True)
-    last_seen_at      = Column(DateTime, default=datetime.utcnow)
+    last_seen_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Vote(Base):
@@ -85,5 +85,5 @@ class Vote(Base):
     place_id   = Column(String, ForeignKey("places.id"), index=True)
     voter      = Column(String, default="default")         # "default" until multi-user auth added
     value      = Column(Integer)                           # +1 or -1
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

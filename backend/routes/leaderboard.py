@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import distinct, func
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -17,7 +17,7 @@ def get_leaderboard(category: str | None = None, db: Session = Depends(get_db)):
             Place.primary_author,
             func.max(Place.primary_author_profile_url).label("profile_url"),
             func.coalesce(func.sum(Vote.value), 0).label("total_score"),
-            func.count(Place.id.distinct()).label("attributed_count"),
+            func.count(distinct(Place.id)).label("attributed_count"),
         )
         .outerjoin(Vote, Vote.place_id == Place.id)
         .group_by(Place.primary_author)
@@ -26,7 +26,7 @@ def get_leaderboard(category: str | None = None, db: Session = Depends(get_db)):
         q = q.filter(Place.category == category)
     rows = q.order_by(
         func.coalesce(func.sum(Vote.value), 0).desc(),
-        func.count(Place.id.distinct()).desc(),
+        func.count(distinct(Place.id)).desc(),
     ).all()
 
     # Python-side: count mentions across all_authors JSON arrays

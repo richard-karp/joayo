@@ -103,12 +103,25 @@ def _best_video_url(info: dict) -> str | None:
 
 # ── Instaloader ───────────────────────────────────────────────────────────────
 
+_instaloader_instance = None
+
+
+def _get_instaloader():
+    """Return a logged-in Instaloader instance, creating it once per process."""
+    global _instaloader_instance
+    if _instaloader_instance is None:
+        import instaloader
+        L = instaloader.Instaloader(quiet=True, download_videos=False)
+        L.login(os.getenv("INSTAGRAM_USERNAME"), os.getenv("INSTAGRAM_PASSWORD"))
+        _instaloader_instance = L
+    return _instaloader_instance
+
+
 def _fetch_instaloader(url: str) -> RawPost:
     import instaloader
 
     shortcode = _extract_shortcode(url)
-    L = instaloader.Instaloader(quiet=True, download_videos=False)
-    L.login(os.getenv("INSTAGRAM_USERNAME"), os.getenv("INSTAGRAM_PASSWORD"))
+    L = _get_instaloader()
     post = instaloader.Post.from_shortcode(L.context, shortcode)
 
     caption = post.caption or ""
