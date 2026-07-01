@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import engine
 from models import Base
-from routes import extract, jobs, export, votes, leaderboard, places
+from routes import extract, jobs, export, votes, leaderboard, places, admin
 
 Base.metadata.create_all(bind=engine)
 
@@ -39,3 +39,4 @@ app.include_router(export.router)
 app.include_router(votes.router)
 app.include_router(leaderboard.router)
 app.include_router(places.router)
+app.include_router(admin.router)
