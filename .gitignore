@@ -32,6 +32,10 @@ backend/venv/
 backend/places.db
 backend/.pytest_cache/
 
+# Local scratch files
+failed_urls.txt
+instagram-cookies.txt
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
