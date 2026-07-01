@@ -130,9 +130,6 @@ def extract(raw_post: RawPost, transcript: Optional[str]) -> list[ExtractedPlace
                     pass
             time.sleep(min(retry_after, 30))
 
-    if response is None:
-        return []
-
     for block in response.content:
         if block.type == "tool_use" and block.name == "extract_places":
             result = ExtractionResult.model_validate(block.input)

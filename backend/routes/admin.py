@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -8,8 +10,14 @@ from routes.extract import _transcript_matches_caption
 router = APIRouter(prefix="/api/admin")
 
 
+def _require_admin(request: Request):
+    token = os.getenv("ADMIN_TOKEN")
+    if not token or request.headers.get("X-Admin-Token") != token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @router.post("/scrub-transcripts")
-def scrub_transcripts(db: Session = Depends(get_db)):
+def scrub_transcripts(request: Request, db: Session = Depends(get_db), _: None = Depends(_require_admin)):
     """Reset transcripts that don't match their caption (CDN collision artefacts).
 
     Sets transcript=None and transcript_missing=True on affected Place records
