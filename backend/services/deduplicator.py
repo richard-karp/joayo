@@ -1,6 +1,7 @@
 import math
 from uuid import uuid4
 
+from rapidfuzz import fuzz as _fuzz
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,10 @@ from schemas import ExtractedPlace
 from services.raw_post import RawPost
 
 _MATCH_RADIUS_M = 150
+_FUZZY_COORD_RADIUS_M = 500   # looser radius when name fuzzy-matches but coords differ slightly
+_FUZZY_TOKEN_SET_THRESHOLD = 85
+_FUZZY_RATIO_THRESHOLD = 70   # prevents "Cafe" from matching "Cafe Bora"
+_COORD_BBOX_DEG = 0.005       # ~550m bounding-box pre-filter
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -39,16 +44,41 @@ def _build_author_entry(raw_post: RawPost) -> dict:
 
 def _find_match(location_name: str, lat: float | None, lng: float | None, session: Session) -> Place | None:
     name = location_name.strip()
-    candidates = session.query(Place).filter(
+
+    # 1. Coordinate-proximity-first: any existing place within 150m is the same place
+    if lat is not None and lng is not None:
+        bbox = session.query(Place).filter(
+            Place.lat.isnot(None),
+            Place.lng.isnot(None),
+            Place.lat.between(lat - _COORD_BBOX_DEG, lat + _COORD_BBOX_DEG),
+            Place.lng.between(lng - _COORD_BBOX_DEG, lng + _COORD_BBOX_DEG),
+        ).all()
+        for place in bbox:
+            if _haversine_m(lat, lng, place.lat, place.lng) <= _MATCH_RADIUS_M:
+                return place
+
+    # 2. Exact name match — handles records without geocoords
+    exact = session.query(Place).filter(
         func.trim(func.lower(Place.location_name)) == name.lower()
     ).all()
+    for place in exact:
+        # If both have coords, step 1 already checked proximity and found no match — skip
+        if lat is not None and lng is not None and place.lat is not None and place.lng is not None:
+            continue
+        return place
 
-    for place in candidates:
-        # If either record has no coords, name match alone is sufficient
-        if lat is None or lng is None or place.lat is None or place.lng is None:
-            return place
-        if _haversine_m(lat, lng, place.lat, place.lng) <= _MATCH_RADIUS_M:
-            return place
+    # 3. Fuzzy name fallback — catches "Gwangjang Market" / "Gwangjang Traditional Market"
+    for place in session.query(Place).all():
+        if not place.location_name:
+            continue
+        a, b = name.lower(), place.location_name.strip().lower()
+        if (_fuzz.token_set_ratio(a, b) >= _FUZZY_TOKEN_SET_THRESHOLD
+                and _fuzz.ratio(a, b) >= _FUZZY_RATIO_THRESHOLD):
+            if lat is not None and lng is not None and place.lat is not None and place.lng is not None:
+                if _haversine_m(lat, lng, place.lat, place.lng) <= _FUZZY_COORD_RADIUS_M:
+                    return place
+            else:
+                return place
 
     return None
 

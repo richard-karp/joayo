@@ -121,3 +121,46 @@ def test_source_urls_no_duplicates(db_session):
     find_or_merge_place(_extracted(), raw, None, None, "job1", db_session)
     place = db_session.get(Place, id1)
     assert len(place.source_urls) == 1
+
+
+def test_coord_proximity_different_names_merges(db_session):
+    """Same location geocoded slightly differently by two posts with different names."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_extracted("Gwangjang Market"), raw1, 37.5697, 127.0094, "job1", db_session)
+    # Different name, but coords are only ~10m apart
+    id2, is_new2 = find_or_merge_place(_extracted("Gwangjang Traditional Market"), raw2, 37.5698, 127.0094, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2
+
+
+def test_fuzzy_name_nearby_coords_merges(db_session):
+    """Fuzzy name match at same location — e.g. 'Gwangjang Market' vs 'Gwangjang Traditional Market' with minor coord difference."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_extracted("Gwangjang Market"), raw1, 37.5697, 127.0094, "job1", db_session)
+    # Coords 300m apart (within fuzzy 500m radius), names fuzzy-match
+    id2, is_new2 = find_or_merge_place(_extracted("Gwangjang Traditional Market"), raw2, 37.572, 127.0094, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2
+
+
+def test_fuzzy_name_distant_coords_creates_new(db_session):
+    """Same fuzzy name but far apart — two different franchise locations."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_extracted("Gwangjang Market"), raw1, 37.5697, 127.0094, "job1", db_session)
+    # 111km apart — clearly a different location
+    id2, is_new2 = find_or_merge_place(_extracted("Gwangjang Traditional Market"), raw2, 38.5697, 127.0094, "job1", db_session)
+    assert is_new2 is True
+    assert id1 != id2
+
+
+def test_fuzzy_name_no_coords_merges(db_session):
+    """Fuzzy name match when neither record has geocoords."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_extracted("Gyeongbokgung Palace"), raw1, None, None, "job1", db_session)
+    id2, is_new2 = find_or_merge_place(_extracted("Gyeongbokgung"), raw2, None, None, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2

@@ -61,11 +61,13 @@ def _mock_extractor_result(names=("Gyeongbokgung Palace",)):
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode", return_value=(37.579, 126.977))
+@patch("routes.extract.geocoder.geocode")
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.fetch_post")
 def test_happy_path(mock_fetch, mock_extract, mock_geocode, mock_session_cls, db):
     mock_session_cls.return_value = db
+    # Two distinct places with distinct coordinates so coord-proximity check doesn't merge them
+    mock_geocode.side_effect = [(37.579, 126.977), (37.5697, 127.0094)]
     mock_fetch.side_effect = [
         make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1"),
         make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2"),
