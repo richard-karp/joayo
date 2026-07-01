@@ -27,6 +27,16 @@ def _is_thin_caption(caption: str) -> bool:
     return len(stripped) < 50
 
 
+def _is_language_mismatch(detected_language: str | None, caption: str | None) -> bool:
+    """Return True if AssemblyAI detected English for a clearly non-Latin-script caption."""
+    if not detected_language or not caption:
+        return False
+    if detected_language == "en":
+        non_ascii = sum(1 for c in caption if ord(c) > 127)
+        return non_ascii / max(len(caption), 1) > 0.3
+    return False
+
+
 def _transcript_matches_caption(transcript: str, caption: str) -> bool:
     """Return False if the transcript is clearly from a different video than the caption.
 
@@ -149,6 +159,7 @@ def process_job(job_id: str, posts: list[dict]):
 
             transcript = None
             transcript_missing = False
+            detected_lang: str | None = None
 
             if raw_post.video_cdn_url and not transcription_disabled:
                 cdn_url = raw_post.video_cdn_url
@@ -187,7 +198,9 @@ def process_job(job_id: str, posts: list[dict]):
                     _upsert_cdn_cache(session, cdn_url, job_id)
                 else:
                     try:
-                        transcript = transcriber.transcribe(cdn_url)
+                        result = transcriber.transcribe(cdn_url)
+                        transcript = result.text
+                        detected_lang = result.detected_language
                         seen_cdn_urls.add(cdn_url)
                         consecutive_transcription_failures = 0
                         _upsert_cdn_cache(session, cdn_url, job_id)
@@ -234,7 +247,10 @@ def process_job(job_id: str, posts: list[dict]):
                     session.commit()
                     continue
 
-            if transcript and not _transcript_matches_caption(transcript, raw_post.caption):
+            if transcript and (
+                _is_language_mismatch(detected_lang, raw_post.caption)
+                or not _transcript_matches_caption(transcript, raw_post.caption)
+            ):
                 transcript = None
                 transcript_missing = True
 

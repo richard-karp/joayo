@@ -1,5 +1,6 @@
 import os
 import time
+from typing import NamedTuple
 
 import httpx
 
@@ -8,6 +9,11 @@ from services import mocks
 ASSEMBLYAI_BASE = "https://api.assemblyai.com/v2"
 _POLL_INTERVAL = 3    # seconds between status polls
 _MAX_POLL_TIME = 600  # 10 minutes before giving up
+
+
+class TranscriptResult(NamedTuple):
+    text: str
+    detected_language: str | None
 
 
 class RateLimitError(RuntimeError):
@@ -23,7 +29,7 @@ def _headers() -> dict:
 
 def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> str:
     if not os.getenv("ASSEMBLYAI_API_KEY"):
-        return mocks.MOCK_TRANSCRIPT
+        return TranscriptResult(text=mocks.MOCK_TRANSCRIPT, detected_language=None)
 
     with httpx.Client(timeout=30) as client:
         # Submit transcription job, respecting Retry-After on 429
@@ -32,7 +38,7 @@ def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> str:
             resp = client.post(
                 f"{ASSEMBLYAI_BASE}/transcript",
                 headers=_headers(),
-                json={"audio_url": video_cdn_url},
+                json={"audio_url": video_cdn_url, "language_detection": True},
             )
             if resp.status_code == 429:
                 retry_after = int(resp.headers.get("Retry-After", "60"))
@@ -64,7 +70,10 @@ def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> str:
                 raise RuntimeError(f"AssemblyAI poll failed: {poll.status_code} {poll.text[:200]}")
             data = poll.json()
             if data["status"] == "completed":
-                return data.get("text") or ""
+                return TranscriptResult(
+                    text=data.get("text") or "",
+                    detected_language=data.get("language_code"),
+                )
             if data["status"] == "error":
                 raise RuntimeError(f"AssemblyAI transcription error: {data.get('error')}")
             time.sleep(_POLL_INTERVAL)

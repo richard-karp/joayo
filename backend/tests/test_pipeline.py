@@ -11,6 +11,7 @@ from models import Job, Place
 from routes.extract import process_job
 from schemas import ExtractedPlace
 from services.raw_post import RawPost
+from services.transcriber import TranscriptResult
 from tests.conftest import make_raw_post
 
 
@@ -61,13 +62,13 @@ def _mock_extractor_result(names=("Gyeongbokgung Palace",)):
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode")
+@patch("routes.extract.geocoder.geocode_with_city")
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.fetch_post")
 def test_happy_path(mock_fetch, mock_extract, mock_geocode, mock_session_cls, db):
     mock_session_cls.return_value = db
     # Two distinct places with distinct coordinates so coord-proximity check doesn't merge them
-    mock_geocode.side_effect = [(37.579, 126.977), (37.5697, 127.0094)]
+    mock_geocode.side_effect = [(37.579, 126.977, "Seoul"), (37.5697, 127.0094, "Seoul")]
     mock_fetch.side_effect = [
         make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1"),
         make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2"),
@@ -91,7 +92,7 @@ def test_happy_path(mock_fetch, mock_extract, mock_geocode, mock_session_cls, db
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode", return_value=(None, None))
+@patch("routes.extract.geocoder.geocode_with_city", return_value=(None, None, None))
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.fetch_post")
 def test_failed_fetch_adds_to_failed_urls(mock_fetch, mock_extract, mock_geocode, mock_session_cls, db):
@@ -131,7 +132,7 @@ def test_thin_caption_no_transcript_goes_to_pending_review(mock_fetch, mock_tran
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode", return_value=(None, None))
+@patch("routes.extract.geocoder.geocode_with_city", return_value=(None, None, None))
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.transcriber.transcribe")
 @patch("routes.extract.fetch_post")
@@ -158,7 +159,7 @@ def test_substantive_caption_no_transcript_sets_flag(
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode", return_value=(None, None))
+@patch("routes.extract.geocoder.geocode_with_city", return_value=(None, None, None))
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.transcriber.transcribe")
 @patch("routes.extract.fetch_post")
@@ -170,7 +171,7 @@ def test_transcript_success(
     mock_fetch.return_value = make_raw_post(
         video_cdn_url="https://cdn.example.com/video.mp4",
     )
-    mock_transcribe.return_value = "Transcript text here."
+    mock_transcribe.return_value = TranscriptResult(text="Transcript text here.", detected_language="en")
     mock_extract.return_value = _mock_extractor_result()
 
     urls = ["https://www.instagram.com/reel/OK/"]
@@ -184,7 +185,7 @@ def test_transcript_success(
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode", return_value=(37.579, 126.977))
+@patch("routes.extract.geocoder.geocode_with_city", return_value=(37.579, 126.977, "Seoul"))
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.fetch_post")
 def test_youtube_video_pipeline(mock_fetch, mock_extract, mock_geocode, mock_session_cls, db):
@@ -218,7 +219,7 @@ def test_youtube_video_pipeline(mock_fetch, mock_extract, mock_geocode, mock_ses
 
 
 @patch("routes.extract.SessionLocal")
-@patch("routes.extract.geocoder.geocode", return_value=(None, None))
+@patch("routes.extract.geocoder.geocode_with_city", return_value=(None, None, None))
 @patch("routes.extract.extractor.extract")
 @patch("routes.extract.fetch_post")
 def test_duplicate_place_across_calls(mock_fetch, mock_extract, mock_geocode, mock_session_cls, db):
