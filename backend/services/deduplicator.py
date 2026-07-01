@@ -10,10 +10,11 @@ from schemas import ExtractedPlace
 from services.raw_post import RawPost
 
 _MATCH_RADIUS_M = 150
-_FUZZY_COORD_RADIUS_M = 500   # looser radius when name fuzzy-matches but coords differ slightly
+_FUZZY_COORD_RADIUS_M = 500    # looser radius when name fuzzy-matches but coords differ slightly
 _FUZZY_TOKEN_SET_THRESHOLD = 85
-_FUZZY_RATIO_THRESHOLD = 70   # prevents "Cafe" from matching "Cafe Bora"
-_COORD_BBOX_DEG = 0.005       # ~550m bounding-box pre-filter
+_FUZZY_RATIO_THRESHOLD = 70    # prevents "Cafe" from matching "Cafe Bora"
+_COORD_BBOX_DEG = 0.005        # ~550m bounding-box pre-filter
+_COORD_NAME_PLAUSIBILITY = 40  # loose sanity check: coord-match must have some name overlap
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -42,10 +43,17 @@ def _build_author_entry(raw_post: RawPost) -> dict:
     return entry
 
 
-def _find_match(location_name: str, lat: float | None, lng: float | None, session: Session) -> Place | None:
+def _find_match(
+    location_name: str,
+    lat: float | None,
+    lng: float | None,
+    session: Session,
+    country: str | None = None,
+    city: str | None = None,
+) -> Place | None:
     name = location_name.strip()
 
-    # 1. Coordinate-proximity-first: any existing place within 150m is the same place
+    # 1. Coordinate-proximity-first: within 150m AND names have some overlap
     if lat is not None and lng is not None:
         bbox = session.query(Place).filter(
             Place.lat.isnot(None),
@@ -55,7 +63,9 @@ def _find_match(location_name: str, lat: float | None, lng: float | None, sessio
         ).all()
         for place in bbox:
             if _haversine_m(lat, lng, place.lat, place.lng) <= _MATCH_RADIUS_M:
-                return place
+                a, b = name.lower(), place.location_name.strip().lower()
+                if _fuzz.token_set_ratio(a, b) >= _COORD_NAME_PLAUSIBILITY:
+                    return place
 
     # 2. Exact name match — handles records without geocoords
     exact = session.query(Place).filter(
@@ -67,8 +77,13 @@ def _find_match(location_name: str, lat: float | None, lng: float | None, sessio
             continue
         return place
 
-    # 3. Fuzzy name fallback — catches "Gwangjang Market" / "Gwangjang Traditional Market"
-    for place in session.query(Place).all():
+    # 3. Fuzzy name fallback — pre-filtered by country/city to reduce scan set
+    fuzzy_q = session.query(Place)
+    if country:
+        fuzzy_q = fuzzy_q.filter(Place.country == country)
+    elif city:
+        fuzzy_q = fuzzy_q.filter(Place.city == city)
+    for place in fuzzy_q.all():
         if not place.location_name:
             continue
         a, b = name.lower(), place.location_name.strip().lower()
@@ -94,7 +109,8 @@ def find_or_merge_place(
     transcript_missing: bool = False,
 ) -> tuple[str, bool]:
     author_entry = _build_author_entry(raw_post)
-    existing = _find_match(extracted.location_name, lat, lng, session)
+    existing = _find_match(extracted.location_name, lat, lng, session,
+                           country=extracted.country, city=extracted.city)
 
     if existing:
         # Add source URL if not already present

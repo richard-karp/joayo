@@ -58,7 +58,7 @@ def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> str:
             )
             if poll.status_code == 429:
                 retry_after = int(poll.headers.get("Retry-After", "60"))
-                time.sleep(retry_after)
+                time.sleep(min(retry_after, 30))
                 continue
             if not poll.is_success:
                 raise RuntimeError(f"AssemblyAI poll failed: {poll.status_code} {poll.text[:200]}")

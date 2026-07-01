@@ -123,6 +123,22 @@ def test_source_urls_no_duplicates(db_session):
     assert len(place.source_urls) == 1
 
 
+def test_coord_proximity_unrelated_names_no_merge(db_session):
+    """Two genuinely different venues within 150m must not merge when names share no tokens."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_extracted("Gyeongbokgung Palace"), raw1, 37.579, 126.977, "job1", db_session)
+    # A cafe 50m away — completely unrelated name
+    cafe = ExtractedPlace(
+        location_name="Cafe Bora",
+        category="eat", subcategory="cafe", is_place=True,
+        summary="Purple latte cafe.", labels=[], insider_tips="",
+    )
+    id2, is_new2 = find_or_merge_place(cafe, raw2, 37.5791, 126.977, "job1", db_session)
+    assert is_new2 is True
+    assert id1 != id2
+
+
 def test_coord_proximity_different_names_merges(db_session):
     """Same location geocoded slightly differently by two posts with different names."""
     raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
@@ -164,3 +180,22 @@ def test_fuzzy_name_no_coords_merges(db_session):
     id2, is_new2 = find_or_merge_place(_extracted("Gyeongbokgung"), raw2, None, None, "job1", db_session)
     assert is_new2 is False
     assert id1 == id2
+
+
+def _extracted_with_country(name: str, country: str, city: str | None = None) -> ExtractedPlace:
+    return ExtractedPlace(
+        location_name=name,
+        category="eat", subcategory="restaurant", is_place=True,
+        country=country, city=city,
+        summary="A place.", labels=[], insider_tips="",
+    )
+
+
+def test_fuzzy_name_different_country_no_merge(db_session):
+    """Same fuzzy name but different countries → should not merge even without coords."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    find_or_merge_place(_extracted_with_country("Gwangjang Market", "South Korea"), raw1, None, None, "job1", db_session)
+    # Country-filtered query won't include the Korean place, so no fuzzy match
+    id2, is_new2 = find_or_merge_place(_extracted_with_country("Gwangjang Traditional Market", "Japan"), raw2, None, None, "job1", db_session)
+    assert is_new2 is True
