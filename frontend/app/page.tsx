@@ -27,7 +27,7 @@ export default function DashboardPage() {
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
   const [places, setPlaces] = useState<Place[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<View>("creators");
+  const [view, setView] = useState<View>("places");
 
   // Creators view state
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
@@ -75,9 +75,9 @@ export default function DashboardPage() {
   const needsPicker = filters && filters.countries.length > 1 && !selectedCountry;
 
   const VIEW_TABS: { id: View; label: string }[] = [
-    { id: "creators", label: "Creators" },
     { id: "places", label: "Places" },
     { id: "categories", label: "Categories" },
+    { id: "creators", label: "Creators" },
   ];
 
   return (
