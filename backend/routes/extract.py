@@ -87,11 +87,15 @@ def process_job(job_id: str, posts: list[dict]):
         updated_place_ids = list(job.updated_place_ids or [])
 
         from models import Place as PlaceModel
-        existing_place_urls = session.query(PlaceModel.source_urls).all()
+        existing_place_rows = session.query(PlaceModel.source_urls, PlaceModel.transcript_missing).all()
         seen_urls: set[str] = set()
-        for (urls,) in existing_place_urls:
+        retranscribe_urls: set[str] = set()
+        for (urls, tm) in existing_place_rows:
             for u in (urls or []):
-                seen_urls.add(u.rstrip("/"))
+                norm = u.rstrip("/")
+                seen_urls.add(norm)
+                if tm:
+                    retranscribe_urls.add(norm)
 
         cdn_url_hits: dict[str, int] = {}
         seen_cdn_urls: set[str] = set()
@@ -113,7 +117,8 @@ def process_job(job_id: str, posts: list[dict]):
 
             url = post["url"]
             normalized = url.rstrip("/")
-            if normalized in seen_urls:
+            is_retranscribe = normalized in retranscribe_urls
+            if normalized in seen_urls and not is_retranscribe:
                 job.processed = (job.processed or 0) + 1
                 session.commit()
                 continue
@@ -208,7 +213,7 @@ def process_job(job_id: str, posts: list[dict]):
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
                             return
-                        if _is_thin_caption(raw_post.caption):
+                        if not is_retranscribe and _is_thin_caption(raw_post.caption):
                             pending_review.append({
                                 "url": url,
                                 "reason": "no_transcript_thin_caption",
@@ -220,8 +225,8 @@ def process_job(job_id: str, posts: list[dict]):
                         transcript_missing = True
 
             elif raw_post.video_cdn_url and transcription_disabled:
-                transcript_missing = not _is_thin_caption(raw_post.caption)
-                if not transcript_missing:
+                transcript_missing = True
+                if not is_retranscribe and _is_thin_caption(raw_post.caption):
                     pending_review.append({"url": url, "reason": "no_transcript_thin_caption"})
                     job.pending_review = pending_review
                     job.processed = (job.processed or 0) + 1
@@ -231,6 +236,20 @@ def process_job(job_id: str, posts: list[dict]):
             if transcript and not _transcript_matches_caption(transcript, raw_post.caption):
                 transcript = None
                 transcript_missing = True
+
+            if is_retranscribe:
+                if transcript:
+                    to_update = [
+                        p for p in
+                        session.query(PlaceModel).filter(PlaceModel.transcript_missing == True).all()
+                        if normalized in [u.rstrip("/") for u in (p.source_urls or [])]
+                    ]
+                    for place in to_update:
+                        place.transcript = transcript
+                        place.transcript_missing = False
+                job.processed = (job.processed or 0) + 1
+                session.commit()
+                continue
 
             try:
                 places = extractor.extract(raw_post, transcript)
