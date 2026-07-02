@@ -30,6 +30,8 @@ backend/*.py[cod]
 backend/.venv/
 backend/venv/
 backend/places.db
+backend/places.db-wal
+backend/places.db-shm
 backend/.pytest_cache/
 
 # Local scratch files
