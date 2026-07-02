@@ -3,6 +3,8 @@ import time
 from typing import Optional
 from uuid import uuid4
 
+from rapidfuzz import fuzz as _fuzz
+
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -312,7 +314,15 @@ def process_job(job_id: str, posts: list[dict]):
 
             # Resolve venue FKs: link dishes/products back to their parent Place
             for non_place_id, venue_name in venue_pending:
-                matched_id = url_place_map.get(venue_name.lower())
+                vname = venue_name.lower()
+                matched_id = url_place_map.get(vname)
+                if not matched_id:
+                    # Fuzzy fallback: handles Korean-parenthetical variants and minor spelling differences
+                    for place_name, pid in url_place_map.items():
+                        if (_fuzz.token_set_ratio(vname, place_name) >= 85
+                                and _fuzz.ratio(vname, place_name) >= 70):
+                            matched_id = pid
+                            break
                 if matched_id:
                     try:
                         non_place_row = session.get(PlaceModel, non_place_id)
