@@ -16,6 +16,7 @@ def _get_client() -> anthropic.Anthropic:
         _client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     return _client
 
+
 _SYSTEM_PROMPT = """You are a travel content extraction assistant. Given a social media post, extract all notable items mentioned — including places, dishes, products, experiences, and services.
 
 For each item, output:

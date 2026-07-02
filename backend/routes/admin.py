@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Place, Vote
-from routes.extract import _transcript_matches_caption
+from services.text_utils import _transcript_matches_caption
 
 router = APIRouter(prefix="/api/admin")
 
@@ -82,16 +82,25 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
 
-def _places_match(a: Place, b: Place) -> bool:
+def _places_match(
+    a: Place,
+    b: Place,
+    *,
+    a_coords: tuple[float | None, float | None] | None = None,
+    b_coords: tuple[float | None, float | None] | None = None,
+) -> bool:
     a_name = (a.location_name or "").strip().lower()
     b_name = (b.location_name or "").strip().lower()
     if not a_name or not b_name:
         return False
 
-    both_coords = all(v is not None for v in [a.lat, a.lng, b.lat, b.lng])
+    a_lat, a_lng = a_coords if a_coords is not None else (a.lat, a.lng)
+    b_lat, b_lng = b_coords if b_coords is not None else (b.lat, b.lng)
+    both_coords = all(v is not None for v in [a_lat, a_lng, b_lat, b_lng])
 
+    dist: float | None = None
     if both_coords:
-        dist = _haversine_m(a.lat, a.lng, b.lat, b.lng)
+        dist = _haversine_m(a_lat, a_lng, b_lat, b_lng)
         if (dist <= _MATCH_RADIUS_M
                 and _fuzz.token_set_ratio(a_name, b_name) >= _COORD_NAME_PLAUSIBILITY
                 and _fuzz.ratio(a_name, b_name) >= _FUZZY_RATIO_THRESHOLD):
@@ -104,7 +113,7 @@ def _places_match(a: Place, b: Place) -> bool:
     ratio = _fuzz.ratio(a_name, b_name)
     if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and ratio >= _FUZZY_RATIO_THRESHOLD:
         if both_coords:
-            return _haversine_m(a.lat, a.lng, b.lat, b.lng) <= _FUZZY_COORD_RADIUS_M
+            return dist <= _FUZZY_COORD_RADIUS_M  # type: ignore[operator]
         return True
 
     return False
@@ -127,8 +136,13 @@ def _absorb(target: Place, source: Place, db: Session) -> None:
         pid = author.get("platform_id")
         if pid and pid in existing_pids:
             continue
-        if author.get("username") not in existing_users:
+        uname = author.get("username")
+        if uname not in existing_users:
             authors.append(author)
+            if pid:
+                existing_pids.add(pid)
+            if uname:
+                existing_users.add(uname)
     target.all_authors = authors
 
     # Update primary author if source posted earlier
@@ -241,6 +255,10 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
     (combining source_urls, authors, votes) and deletes the newer duplicate.
     """
     places = db.query(Place).order_by(Place.created_at).all()
+    # Snapshot coords before any _absorb calls mutate them, preventing coord-chaining
+    coord_snapshot: dict[str, tuple[float | None, float | None]] = {
+        p.id: (p.lat, p.lng) for p in places
+    }
     deleted: set[str] = set()
     pairs: list[dict] = []
 
@@ -250,7 +268,11 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
         for older in places[:i]:
             if older.id in deleted:
                 continue
-            if _places_match(place, older):
+            if _places_match(
+                place, older,
+                a_coords=coord_snapshot[place.id],
+                b_coords=coord_snapshot[older.id],
+            ):
                 _absorb(older, place, db)
                 deleted.add(place.id)
                 pairs.append({
