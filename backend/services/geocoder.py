@@ -1,11 +1,23 @@
 import os
 import time
+from dataclasses import dataclass
 
 import requests
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 
 _nominatim = Nominatim(user_agent="social-data-extractor")
+
+
+@dataclass
+class GeoResult:
+    """Result of a geocode lookup. Replaces the growing return tuples."""
+    lat: float | None = None
+    lng: float | None = None
+    city: str | None = None
+    provider: str | None = None        # "kakao" | "nominatim"
+    place_id: str | None = None        # stable external POI id
+    canonical_name: str | None = None  # provider's canonical name for the POI
 
 # Maps the first word of a Kakao address to an English city/province name.
 # Major metros are their own city; provinces fall back to province name.
@@ -30,67 +42,150 @@ _KR_CITY = {
 }
 
 
+# English names Kakao maps addresses to — used to distinguish a genuine
+# metro/province conflict from a sub-province city Claude named (e.g. "Suwon").
+_KNOWN_KR_REGIONS = frozenset(v.lower() for v in _KR_CITY.values())
+
+
 def _city_from_address(address: str) -> str | None:
-    """Extract English city name from a Kakao address string."""
+    """Extract English city/province name from a Kakao address string."""
     if not address:
         return None
     parts = address.split()
     if not parts:
         return None
-    city = _KR_CITY.get(parts[0])
-    return city
+    return _KR_CITY.get(parts[0])
 
 
-def _kakao_full(location_name: str) -> tuple[float | None, float | None, str | None]:
-    """Call Kakao keyword search; returns (lat, lng, city)."""
+def _kakao_region_conflict(expected_city: str | None, result_city: str | None) -> bool:
+    """True only when expected and result are BOTH recognized metros/provinces that differ.
+
+    If Claude's city is a sub-province city not in the known set (e.g. "Suwon" while
+    Kakao reports the province "Gyeonggi"), that is NOT a conflict — the result is kept.
+    """
+    if not expected_city or not result_city:
+        return False
+    e, r = expected_city.strip().lower(), result_city.strip().lower()
+    if e == r:
+        return False
+    return e in _KNOWN_KR_REGIONS and r in _KNOWN_KR_REGIONS
+
+
+def _kakao_full(location_name: str, expected_city: str | None = None) -> GeoResult:
+    """Call Kakao keyword search. Requests several docs and prefers one whose
+    address city matches expected_city (chain-store disambiguation)."""
     key = os.getenv("KAKAO_REST_API_KEY")
     if not key:
-        return None, None, None
+        return GeoResult()
     try:
         resp = requests.get(
             "https://dapi.kakao.com/v2/local/search/keyword.json",
             headers={"Authorization": f"KakaoAK {key}"},
-            params={"query": location_name, "size": 1},
+            params={"query": location_name, "size": 10},
             timeout=10,
         )
         resp.raise_for_status()
         docs = resp.json().get("documents", [])
-        if docs:
-            doc = docs[0]
-            lat = float(doc["y"])
-            lng = float(doc["x"])
-            city = _city_from_address(doc.get("address_name") or doc.get("road_address_name") or "")
-            return lat, lng, city
+        if not docs:
+            return GeoResult()
+
+        def _doc_city(doc: dict) -> str | None:
+            return _city_from_address(doc.get("address_name") or doc.get("road_address_name") or "")
+
+        chosen = docs[0]
+        if expected_city:
+            ec = expected_city.strip().lower()
+            for doc in docs:
+                dc = _doc_city(doc)
+                if dc and dc.lower() == ec:
+                    chosen = doc
+                    break
+
+        return GeoResult(
+            lat=float(chosen["y"]),
+            lng=float(chosen["x"]),
+            city=_doc_city(chosen),
+            provider="kakao",
+            place_id=chosen.get("id"),
+            canonical_name=chosen.get("place_name"),
+        )
     except Exception:
         pass
-    return None, None, None
+    return GeoResult()
 
 
-def _nominatim_geocode(location_name: str, country: str | None) -> tuple[float | None, float | None]:
+def _cities_compatible(expected_city: str | None, result_city: str | None) -> bool:
+    """Lenient city cross-check for global (non-Kakao) results: treat as compatible
+    unless both are present and neither contains the other (avoids "New York" vs
+    "New York City" false discards while still catching "Paris" vs "Lyon")."""
+    if not expected_city or not result_city:
+        return True
+    e, r = expected_city.strip().lower(), result_city.strip().lower()
+    return e in r or r in e
+
+
+def _nominatim_geocode(location_name: str, country: str | None) -> GeoResult:
     query = f"{location_name}, {country}" if country else location_name
     for attempt in range(2):
         try:
             time.sleep(1)  # Nominatim TOS: 1 req/sec
-            loc = _nominatim.geocode(query, timeout=10)
-            return (loc.latitude, loc.longitude) if loc else (None, None)
+            loc = _nominatim.geocode(query, timeout=10, addressdetails=True)
+            if not loc:
+                return GeoResult()
+            raw = getattr(loc, "raw", {}) or {}
+            addr = raw.get("address", {}) or {}
+            city = (addr.get("city") or addr.get("town") or addr.get("village")
+                    or addr.get("municipality") or addr.get("state"))
+            osm_type = raw.get("osm_type")
+            osm_id = raw.get("osm_id")
+            place_id = f"{osm_type}:{osm_id}" if osm_type and osm_id else (
+                str(raw["place_id"]) if raw.get("place_id") else None
+            )
+            return GeoResult(
+                lat=loc.latitude,
+                lng=loc.longitude,
+                city=city,
+                provider="nominatim",
+                place_id=place_id,
+                canonical_name=raw.get("name") or raw.get("display_name"),
+            )
         except GeocoderTimedOut:
             if attempt == 0:
                 time.sleep(3)
                 continue
         except GeocoderServiceError:
             break
-    return None, None
+    return GeoResult()
+
+
+def geocode_full(
+    location_name: str,
+    country: str | None = None,
+    expected_city: str | None = None,
+) -> GeoResult:
+    """Geocode a place, returning a rich GeoResult (provider, place_id, city).
+
+    Applies an expected_city cross-check to discard wrong-city chain-store hits —
+    strictly for genuine Korean metro/province conflicts, leniently elsewhere.
+    """
+    if country == "South Korea":
+        result = _kakao_full(location_name, expected_city=expected_city)
+        if result.lat is not None:
+            if _kakao_region_conflict(expected_city, result.city):
+                return GeoResult()
+            return result
+    result = _nominatim_geocode(location_name, country)
+    if result.lat is not None and not _cities_compatible(expected_city, result.city):
+        return GeoResult()
+    return result
 
 
 def geocode(
     location_name: str,
     country: str | None = None,
 ) -> tuple[float | None, float | None]:
-    if country == "South Korea":
-        lat, lng, _ = _kakao_full(location_name)
-        if lat is not None:
-            return lat, lng
-    return _nominatim_geocode(location_name, country)
+    result = geocode_full(location_name, country)
+    return result.lat, result.lng
 
 
 def city_from_coords(lat: float, lng: float) -> str | None:
@@ -122,17 +217,6 @@ def geocode_with_city(
     country: str | None = None,
     expected_city: str | None = None,
 ) -> tuple[float | None, float | None, str | None]:
-    """Like geocode() but also returns a city string.
-
-    expected_city: if provided and Kakao returns a different city, the geocoded
-    result is discarded — catches chain stores where keyword search returns a
-    location in a different city than the post describes.
-    """
-    if country == "South Korea":
-        lat, lng, city = _kakao_full(location_name)
-        if lat is not None:
-            if expected_city and city and expected_city.lower() != city.lower():
-                return None, None, None
-            return lat, lng, city
-    lat, lng = _nominatim_geocode(location_name, country)
-    return lat, lng, None
+    """Backward-compatible tuple wrapper around geocode_full()."""
+    result = geocode_full(location_name, country, expected_city)
+    return result.lat, result.lng, result.city

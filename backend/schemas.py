@@ -23,16 +23,24 @@ class ExtractedPlace(BaseModel):
     venue: Optional[str] = None  # if is_place=False, the place where you find/do this
     country: Optional[str] = None   # e.g. "South Korea" — used to bias geocoding
     city: Optional[str] = None      # e.g. "Seoul"
+    neighborhood: Optional[str] = None  # sub-city locality, e.g. "Insadong" — do NOT fold into the name
+    mention_type: Optional[Literal["primary", "incidental"]] = None  # "incidental" = passing/background mention
     summary: str
     labels: list[str]       # freeform descriptors only
     insider_tips: str
 
+    # extra="forbid" emits additionalProperties:false, required for strict tool use.
+    model_config = {"extra": "forbid"}
+
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema, handler):
         schema = handler(core_schema)
-        schema.setdefault("required", [])
-        if "subcategory" not in schema["required"]:
-            schema["required"].append("subcategory")
+        # Strict tool use requires every property listed in "required" and no
+        # per-field "default" keyword. Optional fields stay nullable via anyOf.
+        props = schema.get("properties", {})
+        schema["required"] = list(props.keys())
+        for prop in props.values():
+            prop.pop("default", None)
         return schema
 
     @model_validator(mode="after")
@@ -45,6 +53,8 @@ class ExtractedPlace(BaseModel):
 
 class ExtractionResult(BaseModel):
     places: list[ExtractedPlace]
+
+    model_config = {"extra": "forbid"}
 
 
 # ── Author ───────────────────────────────────────────────────────────────────

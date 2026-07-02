@@ -52,8 +52,14 @@ class Place(Base):
     insider_tips  = Column(String)
 
     # Geocoded
-    lat = Column(Float, nullable=True)
-    lng = Column(Float, nullable=True)
+    lat               = Column(Float, nullable=True)
+    lng               = Column(Float, nullable=True)
+    geocoder          = Column(String, nullable=True)             # "kakao" | "nominatim"
+    geocoder_place_id = Column(String, nullable=True, index=True) # stable external POI id (strongest dedup key)
+
+    # Matching helpers
+    normalized_name = Column(String, nullable=True, index=True)   # normalized location_name for cheap matching
+    neighborhood    = Column(String, nullable=True)               # sub-city locality
 
     # Raw source (from primary_author's post)
     raw_caption        = Column(String)

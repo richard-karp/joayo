@@ -1,3 +1,5 @@
+import re
+
 try:
     from langdetect import detect as _langdetect
     from langdetect import DetectorFactory as _DetectorFactory
@@ -12,6 +14,35 @@ _LATIN_LANGS = frozenset({
     "fr", "gl", "hr", "hu", "id", "it", "lt", "lv", "ms", "nl",
     "no", "pl", "pt", "ro", "sk", "sl", "sq", "sv", "tl", "tr", "vi",
 })
+
+
+# Type/locality words dropped from the *end* of a name so that
+# "Korean BBQ restaurant" → "korean bbq" and "Insadong neighborhood" → "insadong".
+# Only stripped as trailing tokens — leading type words ("Cafe Bora") are part of the name.
+_STOP_SUFFIXES = frozenset({
+    "restaurant", "cafe", "café",
+    "neighborhood", "neighbourhood", "area", "district",
+})
+
+_PAREN_RE = re.compile(r"\([^)]*\)")
+_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def normalize_name(name: str | None) -> str:
+    """Normalize a place name for cheap equality/prefix matching.
+
+    Lowercases, drops parentheticals and punctuation, and strips trailing
+    type/locality stop-suffixes. Non-Latin scripts (e.g. Hangul) are preserved.
+    """
+    if not name:
+        return ""
+    s = name.lower()
+    s = _PAREN_RE.sub(" ", s)     # drop "(...)" segments (romanizations, area tags)
+    s = _PUNCT_RE.sub(" ", s)     # punctuation → space
+    tokens = s.split()
+    while tokens and tokens[-1] in _STOP_SUFFIXES:
+        tokens.pop()
+    return " ".join(tokens)
 
 
 def _transcript_matches_caption(transcript: str, caption: str) -> bool:

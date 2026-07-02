@@ -199,3 +199,113 @@ def test_fuzzy_name_different_country_no_merge(db_session):
     # Country-filtered query won't include the Korean place, so no fuzzy match
     id2, is_new2 = find_or_merge_place(_extracted_with_country("Gwangjang Traditional Market", "Japan"), raw2, None, None, "job1", db_session)
     assert is_new2 is True
+
+
+# ── Dish/venue dedup (#1) ─────────────────────────────────────────────────────
+
+def _dish(name: str, venue: str, city: str | None = "Seoul") -> ExtractedPlace:
+    return ExtractedPlace(
+        location_name=name, category="eat", subcategory="dish",
+        is_place=False, venue=venue, country="South Korea", city=city,
+        summary="A dish.", labels=[], insider_tips="",
+    )
+
+
+def test_same_dish_different_venue_stays_separate(db_session):
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_dish("Bibimbap", "Restaurant A"), raw1, None, None, "job1", db_session)
+    id2, is_new2 = find_or_merge_place(_dish("Bibimbap", "Restaurant B"), raw2, None, None, "job1", db_session)
+    assert is_new2 is True
+    assert id1 != id2
+
+
+def test_same_dish_same_venue_merges(db_session):
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_dish("Bibimbap", "Restaurant A"), raw1, None, None, "job1", db_session)
+    id2, is_new2 = find_or_merge_place(_dish("Bibimbap", "Restaurant A"), raw2, None, None, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2
+
+
+# ── Provider-id-first dedup (#9) ──────────────────────────────────────────────
+
+def test_provider_id_merges_romanization_variants(db_session):
+    """Two romanization variants at the same Kakao POI id merge, despite name divergence."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(
+        _extracted("Gyeongbokgung Palace"), raw1, 37.5796, 126.9770, "job1", db_session,
+        geocoder="kakao", geocoder_place_id="POI-123",
+    )
+    # Different romanization + slightly different coords, but same provider place id
+    id2, is_new2 = find_or_merge_place(
+        _extracted("Kyungbok Palace"), raw2, 37.5798, 126.9772, "job1", db_session,
+        geocoder="kakao", geocoder_place_id="POI-123",
+    )
+    assert is_new2 is False
+    assert id1 == id2
+
+
+def test_provider_id_scoped_to_places_not_dishes(db_session):
+    """A dish and its venue may share a POI id — they must NOT merge on provider id."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    venue_id, _ = find_or_merge_place(
+        _extracted("Gwangjang Market"), raw1, 37.5697, 127.0094, "job1", db_session,
+        geocoder="kakao", geocoder_place_id="POI-999",
+    )
+    dish = _dish("Bindaetteok", "Gwangjang Market")
+    dish_id, is_new = find_or_merge_place(
+        dish, raw2, None, None, "job1", db_session,
+        geocoder="kakao", geocoder_place_id="POI-999",
+    )
+    assert is_new is True
+    assert dish_id != venue_id
+
+
+def test_normalize_collapses_suffix_variants(db_session):
+    """normalize_name collapses type-suffix variants even without coords."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(
+        _extracted_with_country("Insadong neighborhood", "South Korea", "Seoul"),
+        raw1, None, None, "job1", db_session)
+    id2, is_new2 = find_or_merge_place(
+        _extracted_with_country("Insadong", "South Korea", "Seoul"),
+        raw2, None, None, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2
+
+
+# ── Coord gate over-merge guard (#11) ─────────────────────────────────────────
+
+def test_adjacent_different_category_near_coords_stays_separate(db_session):
+    """Two distinct businesses at near-identical coords with different categories don't merge."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    palace = _extracted("Aaa Bbb")  # see_visit / palace
+    id1, _ = find_or_merge_place(palace, raw1, 37.5700, 127.0000, "job1", db_session)
+    cafe = ExtractedPlace(
+        location_name="Ccc Ddd", category="eat", subcategory="cafe", is_place=True,
+        summary="A cafe.", labels=[], insider_tips="",
+    )
+    # ~10m away, unrelated name, different category → must not merge
+    id2, is_new2 = find_or_merge_place(cafe, raw2, 37.57001, 127.0000, "job1", db_session)
+    assert is_new2 is True
+    assert id1 != id2
+
+
+def test_null_country_candidate_still_found_by_fuzzy(db_session):
+    """#4: an existing duplicate with null country/city is still reachable by fuzzy match."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    # First record has no country/city inferred
+    id1, _ = find_or_merge_place(_extracted("Gwangjang Market"), raw1, None, None, "job1", db_session)
+    # Second record has country/city; the null-country candidate must still be found
+    id2, is_new2 = find_or_merge_place(
+        _extracted_with_country("Gwangjang Traditional Market", "South Korea", "Seoul"),
+        raw2, None, None, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2

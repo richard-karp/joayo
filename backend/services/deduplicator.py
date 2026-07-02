@@ -2,15 +2,17 @@ import math
 from uuid import uuid4
 
 from rapidfuzz import fuzz as _fuzz
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from models import Place
 from schemas import ExtractedPlace
 from services.raw_post import RawPost
+from services.text_utils import normalize_name
 
 _MATCH_RADIUS_M = 150
 _FUZZY_COORD_RADIUS_M = 500    # looser radius when name fuzzy-matches but coords differ slightly
+_NEAR_COORD_M = 25             # "same door" — relax the name gate to a category match at this range
 _FUZZY_TOKEN_SET_THRESHOLD = 85
 _FUZZY_RATIO_THRESHOLD = 70    # prevents "Cafe" from matching "Cafe Bora"
 _COORD_BBOX_DEG = 0.005        # ~550m bounding-box pre-filter
@@ -43,66 +45,136 @@ def _build_author_entry(raw_post: RawPost) -> dict:
     return entry
 
 
+def _city_conflict(a: str | None, b: str | None) -> bool:
+    """Chain guard: same name in different cities are distinct venues."""
+    if a and b and a.strip().lower() != b.strip().lower():
+        return True
+    return False
+
+
+def _match_score(
+    extracted: ExtractedPlace,
+    norm: str,
+    lat: float | None,
+    lng: float | None,
+    place: Place,
+) -> tuple[int, float] | None:
+    """Score how well `place` matches the incoming is_place item.
+
+    Returns (tier, value) — higher tier wins, higher value breaks ties — or None.
+      tier 3: coordinate proximity (<=150m) with a plausible name or same-category same-door
+      tier 2: exact normalized name (no coords)
+      tier 1: fuzzy name (within coord radius, or city-guarded when no coords)
+    """
+    pnorm = normalize_name(place.location_name)
+    if not norm or not pnorm:
+        return None
+
+    both_coords = (lat is not None and lng is not None
+                   and place.lat is not None and place.lng is not None)
+    dist = _haversine_m(lat, lng, place.lat, place.lng) if both_coords else None
+
+    exact = norm == pnorm
+    tsr = _fuzz.token_set_ratio(norm, pnorm)
+    rat = _fuzz.ratio(norm, pnorm)
+    cat_match = bool(extracted.category and place.category
+                     and extracted.category == place.category)
+
+    # Tier 3 — coordinate proximity
+    if both_coords and dist <= _MATCH_RADIUS_M:
+        name_ok = exact or (tsr >= _COORD_NAME_PLAUSIBILITY and rat >= _FUZZY_RATIO_THRESHOLD)
+        near_same_category = dist <= _NEAR_COORD_M and cat_match
+        if name_ok or near_same_category:
+            return (3, -dist)
+
+    # Tier 2 — exact normalized name, records without full coords
+    if exact and not both_coords:
+        if _city_conflict(extracted.city, place.city):
+            return None
+        return (2, 0.0)
+
+    # Tier 1 — fuzzy name
+    if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and rat >= _FUZZY_RATIO_THRESHOLD:
+        if both_coords:
+            if dist <= _FUZZY_COORD_RADIUS_M:
+                return (1, -dist)
+            return None
+        if _city_conflict(extracted.city, place.city):
+            return None
+        return (1, 0.0)
+
+    return None
+
+
 def _find_match(
-    location_name: str,
+    extracted: ExtractedPlace,
     lat: float | None,
     lng: float | None,
     session: Session,
-    country: str | None = None,
-    city: str | None = None,
+    geocoder: str | None = None,
+    geocoder_place_id: str | None = None,
 ) -> Place | None:
-    name = location_name.strip()
+    name = extracted.location_name.strip()
+    norm = normalize_name(name)
+    country = extracted.country
+    city = extracted.city
 
-    # 1. Coordinate-proximity-first: within 150m AND names have some overlap
+    # ── Non-place items (dishes/products): must match name AND venue ──────────
+    if not extracted.is_place:
+        venue_norm = normalize_name(extracted.venue) if extracted.venue else ""
+        for place in session.query(Place).filter(Place.is_place == False).all():  # noqa: E712
+            if normalize_name(place.location_name) != norm:
+                continue
+            if _city_conflict(city, place.city):
+                continue
+            place_venue_norm = normalize_name(place.venue) if place.venue else ""
+            if venue_norm != place_venue_norm:
+                continue  # same dish name at a different venue → distinct
+            return place
+        return None
+
+    # ── Step A: provider-id-first (is_place only) ─────────────────────────────
+    if geocoder and geocoder_place_id:
+        match = session.query(Place).filter(
+            Place.is_place == True,  # noqa: E712
+            Place.geocoder == geocoder,
+            Place.geocoder_place_id == geocoder_place_id,
+        ).first()
+        if match:
+            return match
+
+    # ── Steps B/C: build a candidate pool, then pick the best match ───────────
+    pool: dict[str, Place] = {}
+
     if lat is not None and lng is not None:
         bbox = session.query(Place).filter(
+            Place.is_place == True,  # noqa: E712
             Place.lat.isnot(None),
             Place.lng.isnot(None),
             Place.lat.between(lat - _COORD_BBOX_DEG, lat + _COORD_BBOX_DEG),
             Place.lng.between(lng - _COORD_BBOX_DEG, lng + _COORD_BBOX_DEG),
         ).all()
         for place in bbox:
-            if _haversine_m(lat, lng, place.lat, place.lng) <= _MATCH_RADIUS_M:
-                a, b = name.lower(), place.location_name.strip().lower()
-                if (_fuzz.token_set_ratio(a, b) >= _COORD_NAME_PLAUSIBILITY
-                        and _fuzz.ratio(a, b) >= _FUZZY_RATIO_THRESHOLD):
-                    return place
+            pool[place.id] = place
 
-    # 2. Exact name match — handles records without geocoords
-    exact = session.query(Place).filter(
-        func.trim(func.lower(Place.location_name)) == name.lower()
-    ).all()
-    for place in exact:
-        # If both have coords, step 1 already checked proximity and found no match — skip
-        if lat is not None and lng is not None and place.lat is not None and place.lng is not None:
-            continue
-        # Chain guard: same name in different cities are distinct venues, not duplicates
-        if city and place.city and city.lower() != place.city.lower():
-            continue
-        return place
-
-    # 3. Fuzzy name fallback — pre-filtered by country/city to reduce scan set
-    fuzzy_q = session.query(Place)
+    name_q = session.query(Place).filter(Place.is_place == True)  # noqa: E712
     if country:
-        fuzzy_q = fuzzy_q.filter(Place.country == country)
+        name_q = name_q.filter(or_(Place.country == country, Place.country.is_(None)))
     if city:
-        fuzzy_q = fuzzy_q.filter(Place.city == city)
-    for place in fuzzy_q.all():
-        if not place.location_name:
-            continue
-        a, b = name.lower(), place.location_name.strip().lower()
-        if (_fuzz.token_set_ratio(a, b) >= _FUZZY_TOKEN_SET_THRESHOLD
-                and _fuzz.ratio(a, b) >= _FUZZY_RATIO_THRESHOLD):
-            if lat is not None and lng is not None and place.lat is not None and place.lng is not None:
-                if _haversine_m(lat, lng, place.lat, place.lng) <= _FUZZY_COORD_RADIUS_M:
-                    return place
-            else:
-                # Chain guard: name-only fuzzy match across different cities is unsafe
-                if city and place.city and city.lower() != place.city.lower():
-                    continue
-                return place
+        name_q = name_q.filter(or_(Place.city == city, Place.city.is_(None)))
+    for place in name_q.all():
+        pool[place.id] = place
 
-    return None
+    best: Place | None = None
+    best_key: tuple[int, float] | None = None
+    for place in pool.values():
+        score = _match_score(extracted, norm, lat, lng, place)
+        if score is None:
+            continue
+        if best_key is None or score > best_key:
+            best_key = score
+            best = place
+    return best
 
 
 def find_or_merge_place(
@@ -114,10 +186,12 @@ def find_or_merge_place(
     session: Session,
     transcript: str | None = None,
     transcript_missing: bool = False,
+    geocoder: str | None = None,
+    geocoder_place_id: str | None = None,
 ) -> tuple[str, bool]:
     author_entry = _build_author_entry(raw_post)
-    existing = _find_match(extracted.location_name, lat, lng, session,
-                           country=extracted.country, city=extracted.city)
+    existing = _find_match(extracted, lat, lng, session,
+                           geocoder=geocoder, geocoder_place_id=geocoder_place_id)
 
     if existing:
         # Add source URL if not already present
@@ -158,13 +232,21 @@ def find_or_merge_place(
         ):
             existing.primary_author_profile_url = raw_post.author_profile_url
 
-        # Fill in missing geocoords and city from this extraction
+        # Fill in missing geocoords, city, provider ids, and derived fields
         if existing.lat is None and lat is not None:
             existing.lat = lat
         if existing.lng is None and lng is not None:
             existing.lng = lng
         if existing.city is None and extracted.city is not None:
             existing.city = extracted.city
+        if existing.neighborhood is None and extracted.neighborhood is not None:
+            existing.neighborhood = extracted.neighborhood
+        if existing.geocoder is None and geocoder is not None:
+            existing.geocoder = geocoder
+        if existing.geocoder_place_id is None and geocoder_place_id is not None:
+            existing.geocoder_place_id = geocoder_place_id
+        if not existing.normalized_name:
+            existing.normalized_name = normalize_name(existing.location_name)
 
         session.commit()
         return existing.id, False
@@ -181,17 +263,21 @@ def find_or_merge_place(
         all_authors=[author_entry],
         earliest_date_posted=_naive_utc(raw_post.date_posted),
         location_name=extracted.location_name,
+        normalized_name=normalize_name(extracted.location_name),
         category=extracted.category,
         subcategory=extracted.subcategory,
         is_place=extracted.is_place,
         venue=extracted.venue,
         country=extracted.country,
         city=extracted.city,
+        neighborhood=extracted.neighborhood,
         summary=extracted.summary,
         labels=extracted.labels,
         insider_tips=extracted.insider_tips,
         lat=lat,
         lng=lng,
+        geocoder=geocoder,
+        geocoder_place_id=geocoder_place_id,
         raw_caption=raw_post.caption,
         tagged_accounts=raw_post.tagged_accounts,
         transcript=transcript,

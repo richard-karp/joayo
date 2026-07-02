@@ -145,3 +145,25 @@ def test_leaderboard_returns_sorted_list(client):
     assert data[0]["username"] == "test_user"
     assert "total_score" in data[0]
     assert "attributed_count" in data[0]
+
+
+# ── /api/admin/backfill-normalized-names (#15) ───────────────────────────────
+
+def test_backfill_normalized_names(client, monkeypatch):
+    c, session = client
+    monkeypatch.setenv("ADMIN_TOKEN", "secret")
+    job_id = _seed_job(session)
+    place_id = _seed_place(session, job_id)  # seeded with normalized_name unset
+
+    resp = c.post("/api/admin/backfill-normalized-names", headers={"X-Admin-Token": "secret"})
+    assert resp.status_code == 200
+    assert resp.json()["updated"] == 1
+
+    session.expire_all()
+    assert session.get(Place, place_id).normalized_name == "gyeongbokgung palace"
+
+
+def test_backfill_requires_admin_token(client):
+    c, _ = client
+    resp = c.post("/api/admin/backfill-normalized-names")
+    assert resp.status_code == 403

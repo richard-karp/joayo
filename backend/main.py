@@ -17,6 +17,12 @@ with engine.connect() as _conn:
         "ALTER TABLE jobs ADD COLUMN paused_reason TEXT",
         "ALTER TABLE jobs ADD COLUMN remaining_posts TEXT DEFAULT '[]'",
         "ALTER TABLE places ADD COLUMN venue_place_id TEXT REFERENCES places(id)",
+        "ALTER TABLE places ADD COLUMN geocoder TEXT",
+        "ALTER TABLE places ADD COLUMN geocoder_place_id TEXT",
+        "ALTER TABLE places ADD COLUMN normalized_name TEXT",
+        "ALTER TABLE places ADD COLUMN neighborhood TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_places_geocoder_place_id ON places(geocoder_place_id)",
+        "CREATE INDEX IF NOT EXISTS ix_places_normalized_name ON places(normalized_name)",
     ]:
         try:
             _conn.execute(__import__("sqlalchemy").text(_sql))

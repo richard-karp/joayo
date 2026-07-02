@@ -1,0 +1,35 @@
+{
+  "_comment": "Extraction-quality eval fixtures. Each case captures a real post's signals (as they arrive on RawPost) plus the places we expect Claude to extract. Run before/after prompt (#14) or model-routing (#18) changes to catch silent regressions. Replace/extend these seed cases with 10-15 real IG/YT posts. 'expected_places' = names that MUST appear (matched by normalize_name); 'forbidden_places' = names that must NOT appear (generic/area-type junk or incidental mentions you don't want).",
+  "cases": [
+    {
+      "name": "gwangjang-market-dish-and-venue",
+      "post": {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/p/EVAL_GWANGJANG/",
+        "caption": "Best bindaetteok in Seoul! Gwangjang Market never misses 🥞",
+        "hashtags": ["seoul", "koreanfood", "gwangjang"],
+        "tagged_accounts": [],
+        "location_string": "Gwangjang Market, Seoul",
+        "top_comments": [{"text": "the mung bean pancakes here are unreal"}]
+      },
+      "transcript": null,
+      "expected_places": ["Gwangjang Market", "Bindaetteok"],
+      "forbidden_places": ["Korean BBQ restaurant", "street food stall"]
+    },
+    {
+      "name": "thin-caption-geotag-only",
+      "post": {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/p/EVAL_GEOTAG/",
+        "caption": "😍😍 #seoul",
+        "hashtags": ["seoul"],
+        "tagged_accounts": ["cafebora"],
+        "location_string": "Cafe Bora, Seoul",
+        "top_comments": []
+      },
+      "transcript": null,
+      "expected_places": ["Cafe Bora"],
+      "forbidden_places": []
+    }
+  ]
+}

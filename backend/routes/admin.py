@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Place, Vote
-from services.text_utils import _transcript_matches_caption
+from services.text_utils import _transcript_matches_caption, normalize_name
 
 router = APIRouter(prefix="/api/admin")
 
@@ -89,8 +89,19 @@ def _places_match(
     a_coords: tuple[float | None, float | None] | None = None,
     b_coords: tuple[float | None, float | None] | None = None,
 ) -> bool:
-    a_name = (a.location_name or "").strip().lower()
-    b_name = (b.location_name or "").strip().lower()
+    # Places and non-places (dishes/products) are never the same record.
+    if bool(a.is_place) != bool(b.is_place):
+        return False
+    # For dishes/products, require the same venue — same dish name at different
+    # venues are distinct items (mirrors the live deduplicator).
+    if not a.is_place:
+        if normalize_name(a.venue or "") != normalize_name(b.venue or ""):
+            return False
+
+    # Normalized names — shared with the live deduplicator (services.text_utils.normalize_name)
+    # so retroactive merges and live dedup can't drift apart.
+    a_name = normalize_name(a.location_name)
+    b_name = normalize_name(b.location_name)
     if not a_name or not b_name:
         return False
 
@@ -107,12 +118,15 @@ def _places_match(
             return True
 
     if a_name == b_name:
+        if both_coords:
+            # Exact name but both geocoded: only the same location, not two chain
+            # branches far apart. Mirrors the live deduplicator's fuzzy coord radius.
+            return dist <= _FUZZY_COORD_RADIUS_M  # type: ignore[operator]
         # Chain guard: same name in different cities are distinct venues
-        if not both_coords:
-            a_city = (a.city or "").strip().lower()
-            b_city = (b.city or "").strip().lower()
-            if a_city and b_city and a_city != b_city:
-                return False
+        a_city = (a.city or "").strip().lower()
+        b_city = (b.city or "").strip().lower()
+        if a_city and b_city and a_city != b_city:
+            return False
         return True
 
     tsr = _fuzz.token_set_ratio(a_name, b_name)
@@ -255,6 +269,26 @@ def scrub_generic_names(request: Request, db: Session = Depends(get_db), _: None
         "deleted": len(deleted),
         "deleted_records": deleted,
     }
+
+
+@router.post("/backfill-normalized-names")
+def backfill_normalized_names(request: Request, db: Session = Depends(get_db), _: None = Depends(_require_admin)):
+    """Populate normalized_name for existing Place rows (derivable from location_name).
+
+    Run this before merge-duplicates so the normalized-name match and cross-post
+    venue FK resolution see historical rows. Note: geocoder_place_id is NOT
+    backfillable (the provider id was never stored) — provider-id dedup is
+    forward-only for existing data.
+    """
+    updated = 0
+    for place in db.query(Place).all():
+        norm = normalize_name(place.location_name)
+        if place.normalized_name != norm:
+            place.normalized_name = norm
+            updated += 1
+    if updated:
+        db.commit()
+    return {"updated": updated}
 
 
 @router.post("/merge-duplicates")

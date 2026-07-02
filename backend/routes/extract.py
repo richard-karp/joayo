@@ -6,6 +6,7 @@ from uuid import uuid4
 from rapidfuzz import fuzz as _fuzz
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
@@ -13,7 +14,8 @@ from models import Job, CdnUrlCache
 from schemas import ExtractResponse
 from services import url_parser, transcriber, extractor, geocoder, deduplicator
 from services.fetchers import fetch_post
-from services.text_utils import _transcript_matches_caption
+from services.geocoder import GeoResult
+from services.text_utils import _transcript_matches_caption, normalize_name
 from services.transcriber import RateLimitError
 
 router = APIRouter()
@@ -28,6 +30,17 @@ PAUSE_THRESHOLD_EXTRACTION = 2
 def _is_thin_caption(caption: str) -> bool:
     stripped = _THIN_CAPTION_RE.sub("", caption).strip()
     return len(stripped) < 50
+
+
+def _is_empty_of_signal(raw_post) -> bool:
+    """True when a post has no usable extraction signal — thin caption AND no
+    tagged accounts, geotag, or comments. Such posts go to pending_review."""
+    return (
+        _is_thin_caption(raw_post.caption)
+        and not raw_post.tagged_accounts
+        and not raw_post.location_string
+        and not raw_post.top_comments
+    )
 
 
 def _is_language_mismatch(detected_language: str | None, caption: str | None) -> bool:
@@ -96,7 +109,7 @@ def process_job(job_id: str, posts: list[dict]):
         cdn_url_hits: dict[str, int] = {}
         seen_cdn_urls: set[str] = set()
         warnings = list(job.warnings or [])
-        geocode_cache: dict[tuple[str, str | None], tuple[float | None, float | None, str | None]] = {}
+        geocode_cache: dict[tuple[str, str | None, str | None], GeoResult] = {}
 
         # On resume after CDN collision, start with transcription already disabled
         transcription_disabled = any(w["code"] == "cdn_collision" for w in warnings)
@@ -213,7 +226,7 @@ def process_job(job_id: str, posts: list[dict]):
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
                             return
-                        if not is_retranscribe and _is_thin_caption(raw_post.caption) and not raw_post.tagged_accounts:
+                        if not is_retranscribe and _is_empty_of_signal(raw_post):
                             pending_review.append({
                                 "url": url,
                                 "reason": "no_transcript_thin_caption",
@@ -226,7 +239,7 @@ def process_job(job_id: str, posts: list[dict]):
 
             elif raw_post.video_cdn_url and transcription_disabled:
                 transcript_missing = True
-                if not is_retranscribe and _is_thin_caption(raw_post.caption) and not raw_post.tagged_accounts:
+                if not is_retranscribe and _is_empty_of_signal(raw_post):
                     pending_review.append({"url": url, "reason": "no_transcript_thin_caption"})
                     job.pending_review = pending_review
                     job.processed = (job.processed or 0) + 1
@@ -257,6 +270,13 @@ def process_job(job_id: str, posts: list[dict]):
             try:
                 places = extractor.extract(raw_post, transcript)
                 consecutive_extraction_failures = 0
+            except extractor.ExtractionTruncated as e:
+                # Per-post truncation: skip with a warning, do NOT count toward the pause threshold
+                warnings.append({"code": "extraction_truncated", "message": str(e)})
+                job.warnings = warnings
+                job.processed = (job.processed or 0) + 1
+                session.commit()
+                continue
             except Exception as e:
                 consecutive_extraction_failures += 1
                 failed_urls.append({"url": url, "error": f"extraction failed: {e}"})
@@ -273,36 +293,53 @@ def process_job(job_id: str, posts: list[dict]):
                     return
                 continue
 
-            # name → place_id for is_place=True items in this URL (used to resolve venue FKs)
+            # normalized name → place_id for is_place=True items in this URL (used to resolve venue FKs)
             url_place_map: dict[str, str] = {}
-            venue_pending: list[tuple[str, str]] = []  # (non_place_id, venue_name)
+            venue_pending: list[tuple[str, str, str | None]] = []  # (non_place_id, venue_name, city)
 
             for extracted_place in places:
                 try:
+                    place_geocoder = None
+                    place_geocoder_id = None
                     if extracted_place.is_place:
-                        cache_key = (extracted_place.location_name, extracted_place.country)
+                        cache_key = (extracted_place.location_name,
+                                     extracted_place.country, extracted_place.city)
                         if cache_key in geocode_cache:
-                            lat, lng, geocoder_city = geocode_cache[cache_key]
+                            geo = geocode_cache[cache_key]
                         else:
-                            lat, lng, geocoder_city = geocoder.geocode_with_city(
+                            geo = geocoder.geocode_full(
                                 extracted_place.location_name,
                                 country=extracted_place.country,
                                 expected_city=extracted_place.city,
                             )
-                            geocode_cache[cache_key] = (lat, lng, geocoder_city)
-                        if extracted_place.city is None and geocoder_city:
-                            extracted_place.city = geocoder_city
+                            geocode_cache[cache_key] = geo
+                        lat, lng = geo.lat, geo.lng
+                        place_geocoder = geo.provider
+                        place_geocoder_id = geo.place_id
+                        if extracted_place.city is None and geo.city:
+                            extracted_place.city = geo.city
                     else:
                         lat, lng = None, None
+
+                    # Keep (not drop) incidental/passing mentions, but surface them for review
+                    if extracted_place.mention_type == "incidental":
+                        msg = (f"'{extracted_place.location_name}' flagged as an incidental "
+                               f"mention in {url} — kept but may not be a real recommendation.")
+                        if not any(w.get("message") == msg for w in warnings):
+                            warnings.append({"code": "incidental_mention", "message": msg})
+                            job.warnings = warnings
+
                     place_id, _ = deduplicator.find_or_merge_place(
                         extracted_place, raw_post, lat, lng, job_id, session,
                         transcript=transcript,
                         transcript_missing=transcript_missing,
+                        geocoder=place_geocoder,
+                        geocoder_place_id=place_geocoder_id,
                     )
                     if extracted_place.is_place:
-                        url_place_map[extracted_place.location_name.lower()] = place_id
+                        url_place_map[normalize_name(extracted_place.location_name)] = place_id
                     elif extracted_place.venue:
-                        venue_pending.append((place_id, extracted_place.venue))
+                        venue_pending.append((place_id, extracted_place.venue, extracted_place.city))
                     if place_id not in updated_place_ids:
                         updated_place_ids.append(place_id)
                     job.updated_place_ids = updated_place_ids
@@ -313,16 +350,30 @@ def process_job(job_id: str, posts: list[dict]):
                     session.commit()
 
             # Resolve venue FKs: link dishes/products back to their parent Place
-            for non_place_id, venue_name in venue_pending:
-                vname = venue_name.lower()
-                matched_id = url_place_map.get(vname)
+            for non_place_id, venue_name, venue_city in venue_pending:
+                vnorm = normalize_name(venue_name)
+                matched_id = url_place_map.get(vnorm)
                 if not matched_id:
-                    # Fuzzy fallback: handles Korean-parenthetical variants and minor spelling differences
-                    for place_name, pid in url_place_map.items():
-                        if (_fuzz.token_set_ratio(vname, place_name) >= 85
-                                and _fuzz.ratio(vname, place_name) >= 70):
+                    # Fuzzy fallback within this post: Korean-parenthetical variants, minor spelling
+                    for place_norm, pid in url_place_map.items():
+                        if (_fuzz.token_set_ratio(vnorm, place_norm) >= 85
+                                and _fuzz.ratio(vnorm, place_norm) >= 70):
                             matched_id = pid
                             break
+                if not matched_id and vnorm:
+                    # Cross-post fallback: an existing Place matches the venue by normalized name + city
+                    try:
+                        q = session.query(PlaceModel).filter(
+                            PlaceModel.is_place == True,  # noqa: E712
+                            PlaceModel.normalized_name == vnorm,
+                        )
+                        if venue_city:
+                            q = q.filter(or_(PlaceModel.city == venue_city, PlaceModel.city.is_(None)))
+                        cand = q.first()
+                        if cand:
+                            matched_id = cand.id
+                    except Exception:
+                        pass
                 if matched_id:
                     try:
                         non_place_row = session.get(PlaceModel, non_place_id)
