@@ -85,7 +85,7 @@ def _find_match(
     fuzzy_q = session.query(Place)
     if country:
         fuzzy_q = fuzzy_q.filter(Place.country == country)
-    elif city:
+    if city:
         fuzzy_q = fuzzy_q.filter(Place.city == city)
     for place in fuzzy_q.all():
         if not place.location_name:
