@@ -120,11 +120,19 @@ def city_from_coords(lat: float, lng: float) -> str | None:
 def geocode_with_city(
     location_name: str,
     country: str | None = None,
+    expected_city: str | None = None,
 ) -> tuple[float | None, float | None, str | None]:
-    """Like geocode() but also returns a city string."""
+    """Like geocode() but also returns a city string.
+
+    expected_city: if provided and Kakao returns a different city, the geocoded
+    result is discarded — catches chain stores where keyword search returns a
+    location in a different city than the post describes.
+    """
     if country == "South Korea":
         lat, lng, city = _kakao_full(location_name)
         if lat is not None:
+            if expected_city and city and expected_city.lower() != city.lower():
+                return None, None, None
             return lat, lng, city
     lat, lng = _nominatim_geocode(location_name, country)
     return lat, lng, None

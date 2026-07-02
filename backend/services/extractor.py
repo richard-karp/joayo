@@ -109,7 +109,7 @@ def extract(raw_post: RawPost, transcript: Optional[str]) -> list[ExtractedPlace
     for attempt in range(3):
         try:
             response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-sonnet-4-6",
                 max_tokens=4096,
                 system=_SYSTEM_PROMPT,
                 tools=[{

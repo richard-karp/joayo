@@ -1,14 +1,24 @@
 from datetime import datetime
 from typing import Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 # ── Claude extraction ────────────────────────────────────────────────────────
 
+_VALID_SUBCATEGORIES: dict[str, frozenset[str]] = {
+    "eat":       frozenset({"restaurant", "cafe", "bar", "street_food_stall", "korean_bbq", "fine_dining", "bakery", "dish", "drink", "snack"}),
+    "see_visit": frozenset({"temple", "palace", "market_traditional", "neighborhood", "viewpoint", "nature", "museum", "landmark", "park", "island"}),
+    "do":        frozenset({"experience", "class", "day_trip", "show", "outdoor", "festival", "nightlife"}),
+    "shop":      frozenset({"traditional_market", "shopping_district", "boutique", "product", "clothing", "cosmetics", "souvenir"}),
+    "service":   frozenset({"medical", "dental", "beauty_clinic", "wellness", "pharmacy", "spa", "fitness"}),
+    "guide":     frozenset({"licensed_guide", "guide_service", "tour"}),
+}
+
+
 class ExtractedPlace(BaseModel):
     location_name: str
     category: Literal["eat", "see_visit", "do", "shop", "service", "guide"]
-    subcategory: str
+    subcategory: Optional[str] = None
     is_place: bool          # True = has a specific physical address; False = dish, product, tip, etc.
     venue: Optional[str] = None  # if is_place=False, the place where you find/do this
     country: Optional[str] = None   # e.g. "South Korea" — used to bias geocoding
@@ -16,6 +26,13 @@ class ExtractedPlace(BaseModel):
     summary: str
     labels: list[str]       # freeform descriptors only
     insider_tips: str
+
+    @model_validator(mode="after")
+    def _validate_subcategory(self) -> "ExtractedPlace":
+        valid = _VALID_SUBCATEGORIES.get(self.category, frozenset())
+        if self.subcategory and self.subcategory not in valid:
+            self.subcategory = None
+        return self
 
 
 class ExtractionResult(BaseModel):
@@ -50,6 +67,7 @@ class PlaceResponse(BaseModel):
     subcategory: Optional[str]
     is_place: bool = True
     venue: Optional[str] = None
+    venue_place_id: Optional[str] = None
     country: Optional[str] = None
     city: Optional[str] = None
     summary: Optional[str]

@@ -76,6 +76,9 @@ def _find_match(
         # If both have coords, step 1 already checked proximity and found no match — skip
         if lat is not None and lng is not None and place.lat is not None and place.lng is not None:
             continue
+        # Chain guard: same name in different cities are distinct venues, not duplicates
+        if city and place.city and city.lower() != place.city.lower():
+            continue
         return place
 
     # 3. Fuzzy name fallback — pre-filtered by country/city to reduce scan set
@@ -94,6 +97,9 @@ def _find_match(
                 if _haversine_m(lat, lng, place.lat, place.lng) <= _FUZZY_COORD_RADIUS_M:
                     return place
             else:
+                # Chain guard: name-only fuzzy match across different cities is unsafe
+                if city and place.city and city.lower() != place.city.lower():
+                    continue
                 return place
 
     return None

@@ -16,6 +16,7 @@ with engine.connect() as _conn:
         "ALTER TABLE jobs ADD COLUMN warnings TEXT DEFAULT '[]'",
         "ALTER TABLE jobs ADD COLUMN paused_reason TEXT",
         "ALTER TABLE jobs ADD COLUMN remaining_posts TEXT DEFAULT '[]'",
+        "ALTER TABLE places ADD COLUMN venue_place_id TEXT REFERENCES places(id)",
     ]:
         try:
             _conn.execute(__import__("sqlalchemy").text(_sql))

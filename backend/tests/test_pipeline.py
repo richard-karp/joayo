@@ -118,6 +118,7 @@ def test_thin_caption_no_transcript_goes_to_pending_review(mock_fetch, mock_tran
     mock_fetch.return_value = make_raw_post(
         caption="#korea #travel",  # thin: only hashtags
         video_cdn_url="https://cdn.example.com/video.mp4",
+        tagged_accounts=[],  # no tagged accounts — gate should fire
     )
     mock_transcribe.side_effect = RuntimeError("transcription failed")
 

@@ -211,7 +211,7 @@ def process_job(job_id: str, posts: list[dict]):
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
                             return
-                        if not is_retranscribe and _is_thin_caption(raw_post.caption):
+                        if not is_retranscribe and _is_thin_caption(raw_post.caption) and not raw_post.tagged_accounts:
                             pending_review.append({
                                 "url": url,
                                 "reason": "no_transcript_thin_caption",
@@ -224,7 +224,7 @@ def process_job(job_id: str, posts: list[dict]):
 
             elif raw_post.video_cdn_url and transcription_disabled:
                 transcript_missing = True
-                if not is_retranscribe and _is_thin_caption(raw_post.caption):
+                if not is_retranscribe and _is_thin_caption(raw_post.caption) and not raw_post.tagged_accounts:
                     pending_review.append({"url": url, "reason": "no_transcript_thin_caption"})
                     job.pending_review = pending_review
                     job.processed = (job.processed or 0) + 1
@@ -271,6 +271,10 @@ def process_job(job_id: str, posts: list[dict]):
                     return
                 continue
 
+            # name → place_id for is_place=True items in this URL (used to resolve venue FKs)
+            url_place_map: dict[str, str] = {}
+            venue_pending: list[tuple[str, str]] = []  # (non_place_id, venue_name)
+
             for extracted_place in places:
                 try:
                     if extracted_place.is_place:
@@ -279,7 +283,9 @@ def process_job(job_id: str, posts: list[dict]):
                             lat, lng, geocoder_city = geocode_cache[cache_key]
                         else:
                             lat, lng, geocoder_city = geocoder.geocode_with_city(
-                                extracted_place.location_name, country=extracted_place.country
+                                extracted_place.location_name,
+                                country=extracted_place.country,
+                                expected_city=extracted_place.city,
                             )
                             geocode_cache[cache_key] = (lat, lng, geocoder_city)
                         if extracted_place.city is None and geocoder_city:
@@ -291,6 +297,10 @@ def process_job(job_id: str, posts: list[dict]):
                         transcript=transcript,
                         transcript_missing=transcript_missing,
                     )
+                    if extracted_place.is_place:
+                        url_place_map[extracted_place.location_name.lower()] = place_id
+                    elif extracted_place.venue:
+                        venue_pending.append((place_id, extracted_place.venue))
                     if place_id not in updated_place_ids:
                         updated_place_ids.append(place_id)
                     job.updated_place_ids = updated_place_ids
@@ -299,6 +309,18 @@ def process_job(job_id: str, posts: list[dict]):
                     failed_urls.append({"url": url, "error": f"place save failed: {e}"})
                     job.failed_urls = failed_urls
                     session.commit()
+
+            # Resolve venue FKs: link dishes/products back to their parent Place
+            for non_place_id, venue_name in venue_pending:
+                matched_id = url_place_map.get(venue_name.lower())
+                if matched_id:
+                    try:
+                        non_place_row = session.get(PlaceModel, non_place_id)
+                        if non_place_row and non_place_row.venue_place_id is None:
+                            non_place_row.venue_place_id = matched_id
+                            session.commit()
+                    except Exception:
+                        pass
 
             job.processed = (job.processed or 0) + 1
             session.commit()

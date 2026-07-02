@@ -107,6 +107,12 @@ def _places_match(
             return True
 
     if a_name == b_name:
+        # Chain guard: same name in different cities are distinct venues
+        if not both_coords:
+            a_city = (a.city or "").strip().lower()
+            b_city = (b.city or "").strip().lower()
+            if a_city and b_city and a_city != b_city:
+                return False
         return True
 
     tsr = _fuzz.token_set_ratio(a_name, b_name)
@@ -114,6 +120,11 @@ def _places_match(
     if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and ratio >= _FUZZY_RATIO_THRESHOLD:
         if both_coords:
             return dist <= _FUZZY_COORD_RADIUS_M  # type: ignore[operator]
+        # Chain guard for fuzzy name-only matches
+        a_city = (a.city or "").strip().lower()
+        b_city = (b.city or "").strip().lower()
+        if a_city and b_city and a_city != b_city:
+            return False
         return True
 
     return False

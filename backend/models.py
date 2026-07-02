@@ -44,6 +44,7 @@ class Place(Base):
     subcategory   = Column(String, index=True)
     is_place      = Column(Boolean, default=True)          # False = dish, product, tip, etc.
     venue         = Column(String, nullable=True)          # for non-place items: where to find/do this
+    venue_place_id = Column(String, ForeignKey("places.id"), nullable=True)  # resolved FK to the venue Place
     country       = Column(String, nullable=True, index=True)
     city          = Column(String, nullable=True, index=True)
     summary       = Column(String)
