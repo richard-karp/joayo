@@ -3,14 +3,6 @@ import time
 from typing import Optional
 from uuid import uuid4
 
-try:
-    from langdetect import detect as _langdetect
-    from langdetect import DetectorFactory as _DetectorFactory
-    _DetectorFactory.seed = 0
-    _LANGDETECT_AVAILABLE = True
-except ImportError:
-    _LANGDETECT_AVAILABLE = False
-
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -19,6 +11,7 @@ from models import Job, CdnUrlCache
 from schemas import ExtractResponse
 from services import url_parser, transcriber, extractor, geocoder, deduplicator
 from services.fetchers import fetch_post
+from services.text_utils import _transcript_matches_caption
 from services.transcriber import RateLimitError
 
 router = APIRouter()
@@ -28,13 +21,6 @@ _THIN_CAPTION_RE = re.compile(r'#\S+|@\S+|[\U00010000-\U0010ffff]', re.UNICODE)
 PAUSE_THRESHOLD_FETCH = 3
 PAUSE_THRESHOLD_TRANSCRIPTION = 3
 PAUSE_THRESHOLD_EXTRACTION = 2
-
-# ISO 639-1 codes for languages that use the Latin script
-_LATIN_LANGS = frozenset({
-    "af", "ca", "cs", "cy", "da", "de", "en", "es", "et", "fi",
-    "fr", "gl", "hr", "hu", "id", "it", "lt", "lv", "ms", "nl",
-    "no", "pl", "pt", "ro", "sk", "sl", "sq", "sv", "tl", "tr", "vi",
-})
 
 
 def _is_thin_caption(caption: str) -> bool:
@@ -50,33 +36,6 @@ def _is_language_mismatch(detected_language: str | None, caption: str | None) ->
         non_ascii = sum(1 for c in caption if ord(c) > 127)
         return non_ascii / max(len(caption), 1) > 0.3
     return False
-
-
-def _transcript_matches_caption(transcript: str, caption: str) -> bool:
-    """Return False if the transcript is clearly from a different video than the caption.
-
-    Catches the case where Instagram CDN content-addressed storage returns the same
-    video file URL for many different posts — AssemblyAI then returns a cached
-    transcript that belongs to a completely different video.
-    """
-    if not transcript or not caption:
-        return True
-    # Primary: langdetect language comparison
-    if _LANGDETECT_AVAILABLE and len(transcript) >= 20 and len(caption) >= 20:
-        try:
-            t_lang = _langdetect(transcript)
-            c_lang = _langdetect(caption)
-            if t_lang in _LATIN_LANGS and c_lang not in _LATIN_LANGS:
-                return False
-        except Exception:
-            pass
-    # Fallback: non-ASCII heuristic
-    non_ascii = sum(1 for c in caption if ord(c) > 127)
-    if non_ascii / max(len(caption), 1) > 0.3:
-        ascii_in_transcript = sum(1 for c in transcript if ord(c) < 128)
-        if ascii_in_transcript / max(len(transcript), 1) > 0.95:
-            return False
-    return True
 
 
 def _pause_job(job, session, remaining_posts, reason_code, reason_message,
