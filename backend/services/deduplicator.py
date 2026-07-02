@@ -14,7 +14,7 @@ _FUZZY_COORD_RADIUS_M = 500    # looser radius when name fuzzy-matches but coord
 _FUZZY_TOKEN_SET_THRESHOLD = 85
 _FUZZY_RATIO_THRESHOLD = 70    # prevents "Cafe" from matching "Cafe Bora"
 _COORD_BBOX_DEG = 0.005        # ~550m bounding-box pre-filter
-_COORD_NAME_PLAUSIBILITY = 40  # loose sanity check: coord-match must have some name overlap
+_COORD_NAME_PLAUSIBILITY = 85  # coord-proximity match requires same TSR bar as fuzzy step
 
 
 def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -64,7 +64,8 @@ def _find_match(
         for place in bbox:
             if _haversine_m(lat, lng, place.lat, place.lng) <= _MATCH_RADIUS_M:
                 a, b = name.lower(), place.location_name.strip().lower()
-                if _fuzz.token_set_ratio(a, b) >= _COORD_NAME_PLAUSIBILITY:
+                if (_fuzz.token_set_ratio(a, b) >= _COORD_NAME_PLAUSIBILITY
+                        and _fuzz.ratio(a, b) >= _FUZZY_RATIO_THRESHOLD):
                     return place
 
     # 2. Exact name match — handles records without geocoords

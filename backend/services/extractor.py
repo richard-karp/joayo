@@ -40,6 +40,8 @@ Category taxonomy:
 
 Key rules:
 - location_name MUST be a specific proper name (e.g. "Gyeongbokgung Palace", "Café Bora", "Olive Young Seongsu"). Generic descriptions like "Korean BBQ restaurant", "unnamed cafe near Insadong", "local market" are NOT valid — if you cannot identify a specific proper name, skip the item entirely.
+- NEVER form a location_name by combining an area or neighborhood with a category type. All of the following are invalid and must be skipped: "Insadong Korean BBQ", "Hongdae cafe", "Myeongdong restaurant", "Insadong neighborhood Korean BBQ restaurant", "Korean BBQ restaurant (Insadong)", "Insadong neighborhood Korean BBQ". These describe a type of place in an area — not a specific named venue. If you only know the area and the type but not the actual business name, skip the item.
+- When extracting a neighborhood or district as a see_visit item, prefer the plain proper name ("Insadong") over adding the word "neighborhood" or "neighbourhood" ("Insadong neighborhood"). If you do include "neighbourhood", ensure the subcategory is "neighborhood" so it is clearly categorized.
 - tagged_accounts are Instagram handles of featured venues. If a place is tagged, use that handle as the primary name signal (e.g. tagged_accounts includes "cafebora" → location_name is "Cafe Bora"). Tagged accounts are more reliable than vague caption references.
 - A single post can yield multiple items (e.g. a dish AND the restaurant that serves it).
 - For "eat" items: a restaurant/cafe is is_place=true; a specific dish or drink is is_place=false with venue=<restaurant name> if known.
