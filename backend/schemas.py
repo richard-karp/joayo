@@ -27,6 +27,14 @@ class ExtractedPlace(BaseModel):
     labels: list[str]       # freeform descriptors only
     insider_tips: str
 
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        schema = handler(core_schema)
+        schema.setdefault("required", [])
+        if "subcategory" not in schema["required"]:
+            schema["required"].append("subcategory")
+        return schema
+
     @model_validator(mode="after")
     def _validate_subcategory(self) -> "ExtractedPlace":
         valid = _VALID_SUBCATEGORIES.get(self.category, frozenset())
