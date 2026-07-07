@@ -47,6 +47,9 @@ _COUNTRY_ALIASES = {
     "uk": "united kingdom", "u.k.": "united kingdom", "britain": "united kingdom",
     "uae": "united arab emirates",
 }
+# Fold alias targets into the name set so a single membership test covers both — and
+# so the no-pycountry fallback still recognizes these canonical names.
+_COUNTRY_NAMES |= set(_COUNTRY_ALIASES.values())
 
 
 def _norm(s):
@@ -59,9 +62,7 @@ def _canon_country(name):
     if not n:
         return None
     n = _COUNTRY_ALIASES.get(n, n)
-    if n in _COUNTRY_NAMES or n in set(_COUNTRY_ALIASES.values()):
-        return n
-    return None
+    return n if n in _COUNTRY_NAMES else None
 
 
 def compute_ambient(session, *, country_threshold=0.6, city_threshold=0.5,
@@ -75,6 +76,9 @@ def compute_ambient(session, *, country_threshold=0.6, city_threshold=0.5,
     if not total:
         return {"dominant_country": None, "dominant_city": None, "plan": []}
 
+    # Dominance is computed over the WHOLE places table — this assumes one collection
+    # per DB (as the leaderboard/places views also treat places globally). If multiple
+    # distinct trips ever share a DB, scope these counts per-collection instead.
     country_counts = Counter(_norm(r.country) for r in rows if _norm(r.country))
     city_counts = Counter(_norm(r.city) for r in rows if _norm(r.city))
 
@@ -115,17 +119,20 @@ def flag_ambient_places(session, *, country_threshold=0.6, city_threshold=0.5,
     res = compute_ambient(session, country_threshold=country_threshold,
                           city_threshold=city_threshold, media_denylist=media_denylist)
     counts = {"home_country": 0, "home_city": 0, "media": 0}
-    changed = 0
+    flag_ids = set()
     for pid, reason in res["plan"]:
-        should = reason is not None
-        if should:
+        if reason is not None:
             counts[reason] += 1
-        if apply:
-            place = session.get(Place, pid)
+            flag_ids.add(pid)
+
+    changed = 0
+    if apply:
+        # single scan + in-memory mutate, rather than one session.get() per place
+        for place in session.query(Place).all():
+            should = place.id in flag_ids
             if bool(place.is_context) != should:
                 place.is_context = should
                 changed += 1
-    if apply:
         session.commit()
     return {
         "dominant_country": res["dominant_country"],
