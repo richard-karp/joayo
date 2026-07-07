@@ -38,6 +38,7 @@ def _to_response(place: Place, score: int, current_vote_val: int | None) -> Plac
         category=place.category,
         subcategory=place.subcategory,
         is_place=place.is_place if place.is_place is not None else True,
+        is_context=place.is_context or False,
         venue=place.venue,
         country=place.country,
         city=place.city,
@@ -59,9 +60,12 @@ def _to_response(place: Place, score: int, current_vote_val: int | None) -> Plac
 def get_places(
     country: str | None = Query(None),
     city: str | None = Query(None),
+    include_context: bool = Query(False, description="Include ambient home-base / media places (is_context=True)"),
     db: Session = Depends(get_db),
 ):
     q = db.query(Place)
+    if not include_context:
+        q = q.filter(Place.is_context.isnot(True))
     if country:
         q = q.filter(Place.country == country)
     if city:

@@ -84,6 +84,7 @@ class PlaceResponse(BaseModel):
     category: Optional[str]
     subcategory: Optional[str]
     is_place: bool = True
+    is_context: bool = False  # ambient home-base (dominant country/city) or media — demoted
     venue: Optional[str] = None
     venue_place_id: Optional[str] = None
     country: Optional[str] = None

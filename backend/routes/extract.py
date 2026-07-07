@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from database import get_db, SessionLocal
 from models import Job, CdnUrlCache
 from schemas import ExtractResponse
-from services import url_parser, transcriber, extractor, geocoder, deduplicator
+from services import url_parser, transcriber, extractor, geocoder, deduplicator, noise_filter
 from services.fetchers import fetch_post
 from services.geocoder import GeoResult
 from services.text_utils import _transcript_matches_caption, normalize_name
@@ -394,6 +394,13 @@ def process_job(job_id: str, posts: list[dict]):
         job.remaining_posts = []
         job.current_url = None
         session.commit()
+
+        # Recompute ambient-noise flags (dominant home country/city + media) over the
+        # whole table. Best-effort: never let this fail a completed job.
+        try:
+            noise_filter.flag_ambient_places(session)
+        except Exception:
+            session.rollback()
 
     except Exception as e:
         try:

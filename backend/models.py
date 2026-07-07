@@ -61,6 +61,9 @@ class Place(Base):
     normalized_name = Column(String, nullable=True, index=True)   # normalized location_name for cheap matching
     neighborhood    = Column(String, nullable=True)               # sub-city locality
 
+    # Quality flags
+    is_context = Column(Boolean, default=False)  # True = ambient home-base (the collection's dominant country/city) or media — demoted, not shown as a "noteworthy" recommendation
+
     # Raw source (from primary_author's post)
     raw_caption        = Column(String)
     tagged_accounts    = Column(JSON)

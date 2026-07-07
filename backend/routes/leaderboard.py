@@ -20,6 +20,7 @@ def get_leaderboard(category: str | None = None, db: Session = Depends(get_db)):
             func.count(distinct(Place.id)).label("attributed_count"),
         )
         .outerjoin(Vote, Vote.place_id == Place.id)
+        .filter(Place.is_context.isnot(True))  # exclude ambient home-base / media
         .group_by(Place.primary_author)
     )
     if category:
@@ -30,7 +31,7 @@ def get_leaderboard(category: str | None = None, db: Session = Depends(get_db)):
     ).all()
 
     # Python-side: count mentions across all_authors JSON arrays
-    places_q = db.query(Place.all_authors)
+    places_q = db.query(Place.all_authors).filter(Place.is_context.isnot(True))
     if category:
         places_q = places_q.filter(Place.category == category)
     all_places = places_q.all()

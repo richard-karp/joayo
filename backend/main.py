@@ -21,6 +21,7 @@ with engine.connect() as _conn:
         "ALTER TABLE places ADD COLUMN geocoder_place_id TEXT",
         "ALTER TABLE places ADD COLUMN normalized_name TEXT",
         "ALTER TABLE places ADD COLUMN neighborhood TEXT",
+        "ALTER TABLE places ADD COLUMN is_context BOOLEAN DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_places_geocoder_place_id ON places(geocoder_place_id)",
         "CREATE INDEX IF NOT EXISTS ix_places_normalized_name ON places(normalized_name)",
     ]:
