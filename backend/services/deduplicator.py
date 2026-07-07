@@ -77,12 +77,18 @@ def _match_score(
     exact = norm == pnorm
     tsr = _fuzz.token_set_ratio(norm, pnorm)
     rat = _fuzz.ratio(norm, pnorm)
-    cat_match = bool(extracted.category and place.category
-                     and extracted.category == place.category)
+    cat_known = bool(extracted.category and place.category)
+    cat_match = cat_known and extracted.category == place.category
+    # A fuzzy (non-exact) name match across differing categories is almost always a
+    # geocoding collision — a neighbourhood and a venue sharing the area centroid
+    # ("Apgujeong" vs "Mankai Apgujeong"). Exact normalized names bypass this guard.
+    fuzzy_cat_block = cat_known and not cat_match and not exact
 
     # Tier 3 — coordinate proximity
     if both_coords and dist <= _MATCH_RADIUS_M:
-        name_ok = exact or (tsr >= _COORD_NAME_PLAUSIBILITY and rat >= _FUZZY_RATIO_THRESHOLD)
+        name_ok = exact or (tsr >= _COORD_NAME_PLAUSIBILITY
+                            and rat >= _FUZZY_RATIO_THRESHOLD
+                            and not fuzzy_cat_block)
         near_same_category = dist <= _NEAR_COORD_M and cat_match
         if name_ok or near_same_category:
             return (3, -dist)
@@ -93,8 +99,9 @@ def _match_score(
             return None
         return (2, 0.0)
 
-    # Tier 1 — fuzzy name
-    if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and rat >= _FUZZY_RATIO_THRESHOLD:
+    # Tier 1 — fuzzy name (blocked across a category conflict)
+    if (tsr >= _FUZZY_TOKEN_SET_THRESHOLD and rat >= _FUZZY_RATIO_THRESHOLD
+            and not fuzzy_cat_block):
         if both_coords:
             if dist <= _FUZZY_COORD_RADIUS_M:
                 return (1, -dist)

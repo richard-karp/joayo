@@ -7,11 +7,11 @@ from services.deduplicator import find_or_merge_place
 from models import Place
 
 
-def _extracted(name="Gyeongbokgung Palace") -> ExtractedPlace:
+def _extracted(name="Gyeongbokgung Palace", category="see_visit", subcategory="palace") -> ExtractedPlace:
     return ExtractedPlace(
         location_name=name,
-        category="see_visit",
-        subcategory="palace",
+        category=category,
+        subcategory=subcategory,
         is_place=True,
         summary="Historic palace in Seoul.",
         labels=["must-see"],
@@ -301,11 +301,33 @@ def test_null_country_candidate_still_found_by_fuzzy(db_session):
     """#4: an existing duplicate with null country/city is still reachable by fuzzy match."""
     raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
     raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
-    # First record has no country/city inferred
-    id1, _ = find_or_merge_place(_extracted("Gwangjang Market"), raw1, None, None, "job1", db_session)
+    # First record has no country/city inferred. Category is "eat" to match the second
+    # record (_extracted_with_country defaults to eat) so this exercises country/city
+    # reachability, not the cross-category fuzzy guard.
+    id1, _ = find_or_merge_place(
+        _extracted("Gwangjang Market", category="eat", subcategory="restaurant"),
+        raw1, None, None, "job1", db_session)
     # Second record has country/city; the null-country candidate must still be found
     id2, is_new2 = find_or_merge_place(
         _extracted_with_country("Gwangjang Traditional Market", "South Korea", "Seoul"),
         raw2, None, None, "job1", db_session)
     assert is_new2 is False
     assert id1 == id2
+
+
+def test_fuzzy_name_across_categories_stays_separate(db_session):
+    """A neighbourhood and a venue sharing the same area centroid (identical coords) but
+    with different categories must not merge — e.g. 'Apgujeong' (see_visit) vs
+    'Mankai Apgujeong' (eat). Guards against geocoding-collision false merges."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    hood = _extracted("Apgujeong", category="see_visit", subcategory="neighborhood")
+    id1, _ = find_or_merge_place(hood, raw1, 37.5243, 127.0294, "job1", db_session)
+    venue = ExtractedPlace(
+        location_name="Mankai Apgujeong", category="eat", subcategory="restaurant",
+        is_place=True, summary="A restaurant.", labels=[], insider_tips="",
+    )
+    # Identical coords (area centroid) + fuzzy name, but different category → separate.
+    id2, is_new2 = find_or_merge_place(venue, raw2, 37.5243, 127.0294, "job1", db_session)
+    assert is_new2 is True
+    assert id1 != id2

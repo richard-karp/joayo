@@ -1,5 +1,6 @@
 import math
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from rapidfuzz import fuzz as _fuzz
@@ -42,34 +43,45 @@ _GENERIC_EXACT = frozenset({
     "korean restaurant", "korean cafe",
 })
 
+# Descriptive adjectives that carry no identity — dropped before the generic test so
+# "Famous Korean BBQ restaurant" and "unnamed cafe" reduce to their bare type.
+_GENERIC_FILLER = frozenset({
+    "famous", "popular", "best", "top", "unnamed", "small", "tiny", "little",
+    "local", "traditional", "authentic", "hidden", "cozy", "cute", "trendy",
+    "favorite", "favourite", "random", "typical", "generic", "nice",
+})
+
+# Connective words joining a generic type to an area ("... in Insadong").
+_GENERIC_CONNECTIVES = frozenset({"in", "at", "near", "by"})
+
+_PAREN_STRIP_RE = re.compile(r"\([^)]*\)")
+_NONWORD_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
 
 def _is_generic_name(location_name: str) -> bool:
+    """True when a name carries no venue identity — just a category, optionally
+    qualified by an area, filler adjectives, or a parenthetical.
+
+    Strips parentheticals/punctuation, drops filler adjectives, area names,
+    area qualifiers, and connectives, then checks whether what remains is a bare
+    generic type. Catches "Korean BBQ restaurant (Insadong)", "Insadong Korean BBQ
+    (unnamed restaurant)", "Famous Korean BBQ restaurant in Insadong", etc. — while
+    keeping real neighbourhoods ("Insadong") and named venues ("Cafe Bora").
+    """
     lower = (location_name or "").lower().strip()
+    if not lower:
+        return False
 
-    # 1. Exact bare-type or known compound match
-    if lower in _GENERIC_EXACT:
-        return True
-
-    # 2. "[area] [optional qualifier] [generic type]"
-    #    e.g. "Insadong Korean BBQ", "Hongdae cafe", "Myeongdong neighborhood restaurant"
-    for area in _AREA_NAMES:
-        if lower.startswith(area):
-            rest = lower[len(area):].strip().strip("()")
-            for qual in _AREA_QUALIFIERS:
-                if rest.startswith(qual):
-                    rest = rest[len(qual):].strip()
-                    break
-            if rest and rest in _GENERIC_EXACT:
-                return True
-
-    # 3. "[generic type] (area)" — e.g. "Korean BBQ restaurant (Insadong)"
-    if "(" in lower and lower.endswith(")"):
-        before = lower[: lower.rfind("(")].strip()
-        inside = lower[lower.rfind("(") + 1 : -1].strip()
-        if inside in _AREA_NAMES and before in _GENERIC_EXACT:
-            return True
-
-    return False
+    s = _PAREN_STRIP_RE.sub(" ", lower)     # drop "(romanization / area / unnamed)"
+    s = _NONWORD_RE.sub(" ", s)             # punctuation → space
+    core = [
+        t for t in s.split()
+        if t not in _GENERIC_FILLER
+        and t not in _AREA_NAMES
+        and t not in _AREA_QUALIFIERS
+        and t not in _GENERIC_CONNECTIVES
+    ]
+    return " ".join(core) in _GENERIC_EXACT
 
 
 # --- Duplicate detection ---
@@ -105,6 +117,12 @@ def _places_match(
     if not a_name or not b_name:
         return False
 
+    # A fuzzy (non-exact) name match across differing categories is almost always a
+    # geocoding collision (a neighbourhood and a venue sharing the area centroid).
+    # Exact normalized-name matches (handled by the a_name == b_name branch below) are
+    # strong enough to bypass this. Mirrors deduplicator._match_score's fuzzy_cat_block.
+    cat_conflict = bool(a.category and b.category and a.category != b.category)
+
     a_lat, a_lng = a_coords if a_coords is not None else (a.lat, a.lng)
     b_lat, b_lng = b_coords if b_coords is not None else (b.lat, b.lng)
     both_coords = all(v is not None for v in [a_lat, a_lng, b_lat, b_lng])
@@ -113,6 +131,7 @@ def _places_match(
     if both_coords:
         dist = _haversine_m(a_lat, a_lng, b_lat, b_lng)
         if (dist <= _MATCH_RADIUS_M
+                and not cat_conflict
                 and _fuzz.token_set_ratio(a_name, b_name) >= _COORD_NAME_PLAUSIBILITY
                 and _fuzz.ratio(a_name, b_name) >= _FUZZY_RATIO_THRESHOLD):
             return True
@@ -131,7 +150,7 @@ def _places_match(
 
     tsr = _fuzz.token_set_ratio(a_name, b_name)
     ratio = _fuzz.ratio(a_name, b_name)
-    if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and ratio >= _FUZZY_RATIO_THRESHOLD:
+    if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and ratio >= _FUZZY_RATIO_THRESHOLD and not cat_conflict:
         if both_coords:
             return dist <= _FUZZY_COORD_RADIUS_M  # type: ignore[operator]
         # Chain guard for fuzzy name-only matches
@@ -298,6 +317,11 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
     For each place, checks whether an older record with a matching name and/or
     coordinates already exists. If so, merges the newer record into the older one
     (combining source_urls, authors, votes) and deletes the newer duplicate.
+
+    Records with no source_urls are skipped as both merge source and target. These are
+    manual restorations of a previous bad merge (source_urls emptied, summary
+    "Restored: ...") or empty artifacts — they carry no mentions to combine, and
+    re-merging them would silently clobber a human correction.
     """
     places = db.query(Place).order_by(Place.created_at).all()
     # Snapshot coords before any _absorb calls mutate them, preventing coord-chaining
@@ -310,8 +334,12 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
     for i, place in enumerate(places):
         if place.id in deleted:
             continue
+        if not place.source_urls:
+            continue
         for older in places[:i]:
             if older.id in deleted:
+                continue
+            if not older.source_urls:
                 continue
             if _places_match(
                 place, older,
