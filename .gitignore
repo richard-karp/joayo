@@ -32,6 +32,8 @@ backend/venv/
 backend/places.db
 backend/places.db-wal
 backend/places.db-shm
+# local db backups/snapshots
+backend/places.db.*
 backend/.pytest_cache/
 
 # Local scratch files
@@ -43,6 +45,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+backend/*.log
 
 # Vercel
 .vercel
