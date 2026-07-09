@@ -280,8 +280,34 @@ def regeocde_all(session, country: str = "South Korea"):
     print(f"\nRe-geocode: {updated} updated, {city_only} city-only, {failed} failed")
 
 
+def canonicalize_labels_all(session, *, apply=True):
+    """Add canonical tags to fragmented labels across all rows (see
+    services.label_canonicalizer). Additive + idempotent. apply=False = dry run.
+
+    Returns (rows_changed, additions) where additions is [(name, added_tags), ...].
+    """
+    from services.label_canonicalizer import canonicalize_labels
+
+    changed = 0
+    additions = []
+    for place in session.query(Place).filter(Place.labels.isnot(None)).all():
+        current = place.labels or []
+        new = canonicalize_labels(current)
+        if new != current:
+            added = [t for t in new if t not in current]
+            additions.append((place.location_name, added))
+            if apply:
+                place.labels = new
+            changed += 1
+    if apply:
+        session.commit()
+    return changed, additions
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Post-job cleanup")
+    parser.add_argument("--canonicalize-labels", action="store_true", help="Add canonical tags to fragmented labels (additive, idempotent)")
+    parser.add_argument("--dry-run", action="store_true", help="With --canonicalize-labels: show changes without writing")
     parser.add_argument("--fix-geocoding", action="store_true", help="Re-geocode places with wrong coordinates")
     parser.add_argument("--regeocde-all", action="store_true", help="Re-geocode ALL places for a country with Kakao and backfill city")
     parser.add_argument("--country", default="South Korea", help="Expected country for geocoding validation (default: South Korea)")
@@ -292,12 +318,21 @@ if __name__ == "__main__":
     parser.add_argument("--resolve-handles", action="store_true", help="Re-fetch one post per author to get @handles and profile URLs")
     args = parser.parse_args()
 
-    if not args.fix_geocoding and not args.retry_failures and not args.resolve_handles and not getattr(args, 'regeocde_all', False):
+    if not any([args.fix_geocoding, args.retry_failures, args.resolve_handles,
+                getattr(args, 'regeocde_all', False), args.canonicalize_labels]):
         parser.print_help()
         sys.exit(1)
 
     session = SessionLocal()
     try:
+        if args.canonicalize_labels:
+            mode = "DRY RUN" if args.dry_run else "APPLYING"
+            print(f"=== Canonicalizing labels ({mode}) ===")
+            changed, additions = canonicalize_labels_all(session, apply=not args.dry_run)
+            for name, added in additions:
+                print(f"  {name}: +{added}")
+            print(f"\nLabel canonicalization: {changed} rows {'would change' if args.dry_run else 'changed'}")
+
         if args.fix_geocoding:
             print(f"=== Re-geocoding places outside {args.country} ===")
             fix_geocoding(session, country=args.country)

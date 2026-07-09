@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from models import Place
 from schemas import ExtractedPlace
+from services.label_canonicalizer import canonicalize_labels
 from services.raw_post import RawPost
 from services.text_utils import normalize_name
 
@@ -279,7 +280,7 @@ def find_or_merge_place(
         city=extracted.city,
         neighborhood=extracted.neighborhood,
         summary=extracted.summary,
-        labels=extracted.labels,
+        labels=canonicalize_labels(extracted.labels),
         insider_tips=extracted.insider_tips,
         lat=lat,
         lng=lng,
