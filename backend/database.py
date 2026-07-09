@@ -1,8 +1,14 @@
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
+# DB_PATH lets production point at a mounted volume (e.g. /data/places.db on Fly);
+# defaults to a file in the working directory for local dev.
+DB_PATH = os.getenv("DB_PATH", "./places.db")
+
 engine = create_engine(
-    "sqlite:///./places.db",
+    f"sqlite:///{DB_PATH}",
     connect_args={"check_same_thread": False, "timeout": 30},
 )
 

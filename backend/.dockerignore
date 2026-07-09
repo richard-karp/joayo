@@ -1,0 +1,16 @@
+# Keep the image lean and the seed clean.
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+*.log
+.env
+.env.*
+
+# Include places.db (baked seed) but NOT its WAL sidecars or local backups.
+places.db-wal
+places.db-shm
+places.db.*
