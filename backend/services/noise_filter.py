@@ -18,6 +18,9 @@ collection no single value clears the threshold, so nothing is flagged.
 
 Idempotent: recomputes is_context for every row on each run, so flags self-correct
 as a collection grows or its center of gravity shifts.
+
+Note: this filter fully OWNS the is_context column — every run overwrites it for
+all rows. Manual or out-of-band is_context edits will not survive the next job.
 """
 from collections import Counter
 
@@ -86,7 +89,10 @@ def compute_ambient(session, *, country_threshold=0.6, city_threshold=0.5,
     if country_counts:
         name, cnt = country_counts.most_common(1)[0]
         if cnt / total >= country_threshold:
-            dominant_country = name
+            # Canonicalize so home_country matching (which canonicalizes each
+            # location_name) aligns even when the stored country string isn't
+            # already canonical (e.g. "USA" → "united states").
+            dominant_country = _canon_country(name) or name
 
     dominant_city = None
     if city_counts:

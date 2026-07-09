@@ -51,6 +51,23 @@ def test_dominant_country_and_city_are_flagged(db_session):
     assert _by_name(db_session, "Gyeongbokgung Palace").is_context is False
 
 
+def test_dominant_country_canonicalized_before_matching(db_session):
+    """When the stored country string is a non-canonical alias ('USA'), the derived
+    dominant_country is canonicalized so a bare-country item ('United States') still
+    matches and gets flagged as home_country."""
+    _place(db_session, "United States", country="USA")
+    _place(db_session, "Statue of Liberty", city="New York", country="USA")
+    _place(db_session, "Golden Gate Bridge", city="San Francisco", country="USA")
+    _place(db_session, "Griffith Observatory", city="Los Angeles", country="USA")
+    _place(db_session, "Osaka", city="Osaka", country="Japan")
+    db_session.commit()
+
+    res = noise_filter.flag_ambient_places(db_session)
+    assert res["dominant_country"] == "united states"   # canonicalized from "usa"
+    assert _by_name(db_session, "United States").is_context is True
+    assert _by_name(db_session, "Statue of Liberty").is_context is False
+
+
 def test_multi_country_trip_flags_nothing(db_session):
     """The Albania case: an 'underrated countries' collection where no single country
     dominates must keep every country as a legitimate recommendation."""

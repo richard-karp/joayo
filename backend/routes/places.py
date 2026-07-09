@@ -86,9 +86,10 @@ def get_places(
 
 @router.get("/api/filters")
 def get_filters(db: Session = Depends(get_db)):
-    # Facet counts reflect actual places only — exclude non-place items
-    # (dishes, products, tips) and ambient-context rows, matching the default
-    # /api/places list. Without this, counts include is_place=False rows.
+    # Facet counts reflect actual venues only — exclude non-place items (dishes,
+    # products, tips) and ambient-context rows. Deliberately NARROWER than the
+    # /api/places list, which still returns is_place=False items alongside venues;
+    # the counts describe how many real places exist per country/city.
     country_rows = (
         db.query(Place.country, func.count(Place.id))
         .filter(Place.country.isnot(None))
