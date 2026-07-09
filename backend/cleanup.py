@@ -30,9 +30,18 @@ def _in_korea(lat, lng) -> bool:
 
 
 def fix_geocoding(session, country: str = "South Korea"):
-    """Re-geocode places whose coordinates fall outside the expected country."""
+    """Re-geocode places whose coordinates fall outside the expected country.
+
+    Only touches places *expected* to be in `country` — those whose stored country
+    is unset or already matches it. Places explicitly tagged with a different
+    country (genuinely-foreign venues, e.g. a Tokyo restaurant) are left untouched
+    so their correct coordinates aren't clobbered back into Korea.
+    """
     places = session.query(Place).filter(Place.lat.isnot(None), Place.is_place == True).all()
-    wrong = [p for p in places if not _in_korea(p.lat, p.lng)]
+    wrong = [
+        p for p in places
+        if not _in_korea(p.lat, p.lng) and (not p.country or p.country == country)
+    ]
     print(f"Found {len(wrong)} places with coordinates outside South Korea")
 
     fixed = 0
