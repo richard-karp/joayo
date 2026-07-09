@@ -4,7 +4,7 @@
 #
 
 app = 'joayo-api'
-primary_region = 'yyz'
+primary_region = 'nrt'
 
 [build]
   dockerfile = 'Dockerfile'
