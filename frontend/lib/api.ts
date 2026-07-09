@@ -35,10 +35,15 @@ export async function getLeaderboard(category?: string | null): Promise<Leaderbo
   return request(`/api/leaderboard${qs}`);
 }
 
-export async function getPlaces(params?: { country?: string; city?: string }): Promise<Place[]> {
+export async function getPlaces(
+  params?: { country?: string; city?: string; subcategory?: string; label?: string; q?: string }
+): Promise<Place[]> {
   const qs = new URLSearchParams();
   if (params?.country) qs.set("country", params.country);
   if (params?.city) qs.set("city", params.city);
+  if (params?.subcategory) qs.set("subcategory", params.subcategory);
+  if (params?.label) qs.set("label", params.label);
+  if (params?.q) qs.set("q", params.q);
   const query = qs.toString() ? `?${qs}` : "";
   return request(`/api/places${query}`);
 }
@@ -46,6 +51,7 @@ export async function getPlaces(params?: { country?: string; city?: string }): P
 export async function getFilters(): Promise<{
   countries: { name: string; place_count: number }[];
   cities: { name: string; country: string; place_count: number }[];
+  subcategories: { name: string; category: string; place_count: number }[];
 }> {
   return request("/api/filters");
 }

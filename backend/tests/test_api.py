@@ -199,17 +199,18 @@ def test_real_places_not_flagged_generic(name):
 
 # ── /api/filters facet counts ────────────────────────────────────────────────
 
-def _add_faceted_place(session, job_id, name, *, country, city,
-                       is_place=True, is_context=False):
+def _add_faceted_place(session, job_id, name, *, country=None, city=None,
+                       category="eat", subcategory="restaurant",
+                       labels=None, summary="", is_place=True, is_context=False):
     pid = str(uuid4())
     session.add(Place(
         id=pid, created_by_job_id=job_id,
         source_urls=["https://x/" + pid], platform="instagram",
         primary_author="u", primary_author_id="1",
         all_authors=[{"username": "u", "platform_id": "1", "platform": "instagram"}],
-        location_name=name, category="eat", subcategory="restaurant",
+        location_name=name, category=category, subcategory=subcategory,
         country=country, city=city, is_place=is_place, is_context=is_context,
-        summary="", labels=[], insider_tips="",
+        summary=summary, labels=labels or [], insider_tips="",
         raw_caption="", tagged_accounts=[], transcript_missing=False,
     ))
     session.commit()
@@ -236,7 +237,63 @@ def test_filters_counts_only_real_non_context_places(client):
     assert data["cities"] == [{"name": "Seoul", "country": "South Korea", "place_count": 1}]
 
 
-# ── /api/admin/merge-duplicates ──────────────────────────────────────────────
+def test_filters_subcategory_facet_includes_dishes_excludes_context(client):
+    """The subcategory facet is a filter dimension: it counts non-context items
+    including is_place=False ones (dishes), but drops is_context rows."""
+    c, session = client
+    job_id = _seed_job(session)
+    _add_faceted_place(session, job_id, "Palace", category="see_visit", subcategory="museum")
+    _add_faceted_place(session, job_id, "A Dish", category="eat", subcategory="dish", is_place=False)
+    _add_faceted_place(session, job_id, "Home Base", category="see_visit", subcategory="museum",
+                       is_context=True)  # excluded
+
+    data = c.get("/api/filters").json()
+    subs = {(s["category"], s["name"]): s["place_count"] for s in data["subcategories"]}
+    assert subs[("see_visit", "museum")] == 1     # context row not counted
+    assert subs[("eat", "dish")] == 1             # is_place=False dish IS counted
+
+
+def test_get_places_filter_by_subcategory(client):
+    c, session = client
+    job_id = _seed_job(session)
+    _add_faceted_place(session, job_id, "Leeum Museum", category="see_visit", subcategory="museum")
+    _add_faceted_place(session, job_id, "Some Cafe", category="eat", subcategory="cafe")
+
+    resp = c.get("/api/places?subcategory=museum")
+    assert resp.status_code == 200
+    names = [p["location_name"] for p in resp.json()]
+    assert names == ["Leeum Museum"]
+
+
+def test_get_places_filter_by_label_is_exact(client):
+    c, session = client
+    job_id = _seed_job(session)
+    _add_faceted_place(session, job_id, "Leeum", category="see_visit", subcategory="museum",
+                       labels=["art", "contemporary art"])
+    _add_faceted_place(session, job_id, "Nail Salon", category="service", subcategory="beauty_clinic",
+                       labels=["custom nail art"])  # contains 'art' substring but not the exact tag
+    _add_faceted_place(session, job_id, "Diner", category="eat", subcategory="restaurant",
+                       labels=["cheap"])
+
+    names = [p["location_name"] for p in c.get("/api/places?label=art").json()]
+    assert names == ["Leeum"]  # exact label match only — not the 'nail art' row
+
+
+def test_get_places_search_matches_name_and_labels(client):
+    c, session = client
+    job_id = _seed_job(session)
+    # Matches via NAME; subcategory 'museum' deliberately does not contain "art".
+    _add_faceted_place(session, job_id, "Art Space Pohang", category="see_visit",
+                       subcategory="museum", labels=["contemporary"])
+    # Matches via a LABEL substring.
+    _add_faceted_place(session, job_id, "Random Cafe", category="eat", subcategory="cafe",
+                       labels=["art on the walls"])
+    # No "art" in name, subcategory, summary, or labels.
+    _add_faceted_place(session, job_id, "Plain Diner", category="eat", subcategory="restaurant",
+                       labels=["cheap"])
+
+    names = {p["location_name"] for p in c.get("/api/places?q=art").json()}
+    assert names == {"Art Space Pohang", "Random Cafe"}
 
 def _add_place(session, job_id, name, *, category="see_visit", subcategory="landmark",
                lat=None, lng=None, source_urls=None, summary=""):

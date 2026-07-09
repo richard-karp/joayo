@@ -8,9 +8,11 @@ import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
 interface Props {
   place: Place;
   onClose: () => void;
+  activeLabel?: string | null;
+  onLabelClick?: (label: string) => void;
 }
 
-export default function PlaceCard({ place, onClose }: Props) {
+export default function PlaceCard({ place, onClose, activeLabel, onLabelClick }: Props) {
   const mentionCount = place.source_urls.length;
 
   return (
@@ -53,14 +55,25 @@ export default function PlaceCard({ place, onClose }: Props) {
         )}
         {place.labels && place.labels.length > 0 && (
           <div className="flex flex-wrap gap-1">
-            {place.labels.map((label) => (
-              <span
-                key={label}
-                className="px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600 text-xs"
-              >
-                {label}
-              </span>
-            ))}
+            {place.labels.map((label) => {
+              const isActive = activeLabel === label;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => onLabelClick?.(label)}
+                  disabled={!onLabelClick}
+                  title={onLabelClick ? `Filter by "${label}"` : undefined}
+                  className={`px-2 py-0.5 rounded-full text-xs transition-colors ${
+                    isActive
+                      ? "bg-zinc-900 text-white"
+                      : "bg-zinc-100 text-zinc-600 enabled:hover:bg-zinc-200 enabled:cursor-pointer"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         )}
 

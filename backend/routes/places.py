@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
+from sqlalchemy import String, cast, func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -52,17 +52,36 @@ def _to_response(place: Place, score: int, current_vote_val: int | None) -> Plac
 def get_places(
     country: str | None = Query(None),
     city: str | None = Query(None),
+    subcategory: str | None = Query(None),
+    label: str | None = Query(None, description="Exact-match filter on a single label/tag"),
+    q: str | None = Query(None, description="Free-text search over name, labels, summary, subcategory"),
     include_context: bool = Query(False, description="Include ambient home-base / media places (is_context=True)"),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Place)
+    query = db.query(Place)
     if not include_context:
-        q = q.filter(Place.is_context.isnot(True))
+        query = query.filter(Place.is_context.isnot(True))
     if country:
-        q = q.filter(Place.country == country)
+        query = query.filter(Place.country == country)
     if city:
-        q = q.filter(Place.city == city)
-    places = q.order_by(Place.created_at.desc()).all()
+        query = query.filter(Place.city == city)
+    if subcategory:
+        query = query.filter(Place.subcategory == subcategory)
+    if q:
+        like = f"%{q}%"
+        # labels is a JSON array; cast to text so a substring match hits any element.
+        query = query.filter(or_(
+            Place.location_name.ilike(like),
+            Place.summary.ilike(like),
+            Place.subcategory.ilike(like),
+            cast(Place.labels, String).ilike(like),
+        ))
+    places = query.order_by(Place.created_at.desc()).all()
+
+    # Exact label membership is a JSON-array test — cheap to do in Python over the
+    # already-filtered rows, and avoids brittle JSON-substring SQL.
+    if label:
+        places = [p for p in places if label in (p.labels or [])]
 
     # Compute vote scores in bulk
     scores = {
@@ -108,7 +127,21 @@ def get_filters(db: Session = Depends(get_db)):
         .order_by(func.count(Place.id).desc())
         .all()
     )
+    # Subcategory facet is a *filter* dimension, so its counts match what
+    # /api/places?subcategory=… actually returns: non-context items including
+    # is_place=False ones (e.g. eat/dish). Hence no is_place filter here.
+    subcategory_rows = (
+        db.query(Place.category, Place.subcategory, func.count(Place.id))
+        .filter(Place.subcategory.isnot(None))
+        .filter(Place.is_context.isnot(True))
+        .group_by(Place.category, Place.subcategory)
+        .order_by(func.count(Place.id).desc())
+        .all()
+    )
     return {
         "countries": [{"name": c, "place_count": n} for c, n in country_rows],
         "cities": [{"name": c, "country": co, "place_count": n} for c, co, n in city_rows],
+        "subcategories": [
+            {"name": s, "category": c, "place_count": n} for c, s, n in subcategory_rows
+        ],
     }

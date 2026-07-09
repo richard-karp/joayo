@@ -19,12 +19,16 @@ type View = "creators" | "places" | "categories";
 interface FilterData {
   countries: { name: string; place_count: number }[];
   cities: { name: string; country: string; place_count: number }[];
+  subcategories: { name: string; category: string; place_count: number }[];
 }
 
 export default function DashboardPage() {
   const [filters, setFilters] = useState<FilterData | null>(null);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
+  const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   const [places, setPlaces] = useState<Place[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>("places");
@@ -49,12 +53,25 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedCountry && filters && filters.countries.length > 1) return;
-    getPlaces({ country: selectedCountry ?? undefined, city: selectedCity ?? undefined })
-      .then((data) => {
+    // Debounce so typing in the search box doesn't fire a request per keystroke.
+    const handle = setTimeout(() => {
+      getPlaces({
+        country: selectedCountry ?? undefined,
+        city: selectedCity ?? undefined,
+        subcategory: selectedSubcategory ?? undefined,
+        label: selectedLabel ?? undefined,
+        q: search.trim() || undefined,
+      }).then((data) => {
         setPlaces(data);
         setLoading(false);
       });
-  }, [selectedCountry, selectedCity, filters]);
+    }, search ? 250 : 0);
+    return () => clearTimeout(handle);
+  }, [selectedCountry, selectedCity, selectedSubcategory, selectedLabel, search, filters]);
+
+  const handleLabelClick = useCallback((label: string) => {
+    setSelectedLabel((prev) => (prev === label ? null : label));
+  }, []);
 
   const citiesForCountry = filters?.cities.filter((c) => c.country === selectedCountry) ?? [];
 
@@ -203,6 +220,48 @@ export default function DashboardPage() {
               </span>
             </div>
 
+            {/* Search + subcategory filter (applies across all views) */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, tags, summary…"
+                className="flex-1 min-w-[12rem] max-w-sm px-3 py-1.5 rounded-lg border border-zinc-200 text-sm text-zinc-700 placeholder:text-zinc-400 focus:outline-none focus:border-zinc-400"
+              />
+              {filters && filters.subcategories.length > 0 && (
+                <select
+                  value={selectedSubcategory ?? ""}
+                  onChange={(e) => setSelectedSubcategory(e.target.value || null)}
+                  className="px-3 py-1.5 rounded-lg border border-zinc-200 text-sm text-zinc-700 bg-white focus:outline-none focus:border-zinc-400"
+                >
+                  <option value="">All types</option>
+                  {filters.subcategories.map((s) => (
+                    <option key={`${s.category}:${s.name}`} value={s.name}>
+                      {s.name.replace(/_/g, " ")} ({s.place_count})
+                    </option>
+                  ))}
+                </select>
+              )}
+              {selectedLabel && (
+                <button
+                  onClick={() => setSelectedLabel(null)}
+                  className="inline-flex items-center gap-1 text-xs bg-zinc-900 text-white rounded-full px-3 py-1.5 hover:bg-zinc-700 transition-colors"
+                  title="Clear label filter"
+                >
+                  🏷 {selectedLabel} <span className="opacity-70">✕</span>
+                </button>
+              )}
+              {(search || selectedSubcategory || selectedLabel) && (
+                <button
+                  onClick={() => { setSearch(""); setSelectedSubcategory(null); setSelectedLabel(null); }}
+                  className="text-xs text-zinc-500 hover:text-zinc-900 border border-zinc-200 rounded-lg px-3 py-1.5 transition-colors"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
             {/* Creators view */}
             {view === "creators" && (
               <>
@@ -259,6 +318,8 @@ export default function DashboardPage() {
                   {selectedPlace && (
                     <PlaceCard
                       place={selectedPlace}
+                      activeLabel={selectedLabel}
+                      onLabelClick={handleLabelClick}
                       onClose={() => {
                         setSelectedPlaceId(null);
                         setHighlightedPlaceId(null);
@@ -286,6 +347,8 @@ export default function DashboardPage() {
                   {selectedPlace && (
                     <PlaceCard
                       place={selectedPlace}
+                      activeLabel={selectedLabel}
+                      onLabelClick={handleLabelClick}
                       onClose={() => {
                         setSelectedPlaceId(null);
                         setHighlightedPlaceId(null);
