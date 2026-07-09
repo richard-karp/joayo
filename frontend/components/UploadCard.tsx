@@ -25,6 +25,9 @@ export default function UploadCard({ onJobStarted }: Props) {
   const [selectedCollection, setSelectedCollection] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Empty by default; the stored code (if any) is applied automatically at
+  // submit time via the api client's fallback, so returning users needn't retype.
+  const [accessCode, setAccessCode] = useState("");
 
   const onDrop = useCallback(async (accepted: File[]) => {
     const f = accepted[0];
@@ -75,10 +78,12 @@ export default function UploadCard({ onJobStarted }: Props) {
 
     setLoading(true);
     try {
-      const { job_id } = await submitExtract(formData);
+      if (accessCode) localStorage.setItem("joayo_extract_code", accessCode);
+      const { job_id } = await submitExtract(formData, accessCode || undefined);
       onJobStarted(job_id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Submission failed.");
+      const msg = e instanceof Error ? e.message : "Submission failed.";
+      setError(/401/.test(msg) ? "Invalid access code." : msg);
     } finally {
       setLoading(false);
     }
@@ -163,6 +168,17 @@ export default function UploadCard({ onJobStarted }: Props) {
             onChange={(e) => setUrlText(e.target.value)}
           />
         )}
+
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-zinc-700">Access code</label>
+          <input
+            type="password"
+            value={accessCode}
+            onChange={(e) => setAccessCode(e.target.value)}
+            placeholder="Required to run an extraction (saved after first use)"
+            className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900"
+          />
+        </div>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

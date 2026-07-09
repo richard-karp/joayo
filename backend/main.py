@@ -1,5 +1,7 @@
+import os
+
 from dotenv import load_dotenv, find_dotenv
-load_dotenv(find_dotenv(raise_error_if_not_found=True))
+load_dotenv(find_dotenv(raise_error_if_not_found=False))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,11 +33,19 @@ with engine.connect() as _conn:
         except Exception:
             pass  # column already exists
 
-app = FastAPI(title="Social Data Extractor")
+app = FastAPI(title="joayo")
+
+# Comma-separated allowed origins; defaults to local dev. In production set
+# CORS_ORIGINS to the deployed frontend URL(s), e.g. "https://joayo.vercel.app".
+_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

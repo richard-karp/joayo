@@ -1,3 +1,4 @@
+import os
 import re
 import time
 from typing import Optional
@@ -5,7 +6,7 @@ from uuid import uuid4
 
 from rapidfuzz import fuzz as _fuzz
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,18 @@ from services.text_utils import _transcript_matches_caption, normalize_name
 from services.transcriber import RateLimitError
 
 router = APIRouter()
+
+
+def require_extract_secret(x_extract_secret: Optional[str] = Header(None)):
+    """Gate extraction (which spends API budget) behind a shared secret.
+
+    When EXTRACT_SECRET is set (production), requests must send a matching
+    X-Extract-Secret header. When it is unset (local dev), extraction is open.
+    """
+    secret = os.getenv("EXTRACT_SECRET")
+    if secret and x_extract_secret != secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing extract access code")
+
 
 _THIN_CAPTION_RE = re.compile(r'#\S+|@\S+|[\U00010000-\U0010ffff]', re.UNICODE)
 
@@ -417,7 +430,8 @@ def process_job(job_id: str, posts: list[dict]):
 
 
 @router.post("/api/jobs/{job_id}/resume")
-async def resume_job(job_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def resume_job(job_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+                     _: None = Depends(require_extract_secret)):
     job = db.get(Job, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -454,6 +468,7 @@ async def extract_endpoint(
     urls: Optional[str] = Form(None),
     collection: Optional[str] = Form(None),
     db: Session = Depends(get_db),
+    _: None = Depends(require_extract_secret),
 ):
     if file is None and not urls:
         raise HTTPException(status_code=422, detail="Provide either a file or urls")

@@ -76,6 +76,33 @@ def test_extract_with_url_text(client, mocker):
     assert "job_id" in resp.json()
 
 
+def test_extract_requires_secret_when_configured(client, mocker, monkeypatch):
+    c, _ = client
+    mocker.patch("routes.extract.process_job")
+    monkeypatch.setenv("EXTRACT_SECRET", "s3cret")
+
+    # Missing/invalid code -> 401
+    resp = c.post("/api/extract", data={"urls": "https://www.instagram.com/p/ABC123/"})
+    assert resp.status_code == 401
+    resp = c.post("/api/extract", data={"urls": "https://www.instagram.com/p/ABC123/"},
+                  headers={"X-Extract-Secret": "wrong"})
+    assert resp.status_code == 401
+
+    # Correct code -> allowed
+    resp = c.post("/api/extract", data={"urls": "https://www.instagram.com/p/ABC123/"},
+                  headers={"X-Extract-Secret": "s3cret"})
+    assert resp.status_code == 200
+    assert "job_id" in resp.json()
+
+
+def test_extract_open_when_secret_unset(client, mocker):
+    """With no EXTRACT_SECRET configured (local dev), extraction stays open."""
+    c, _ = client
+    mocker.patch("routes.extract.process_job")
+    resp = c.post("/api/extract", data={"urls": "https://www.instagram.com/p/ABC123/"})
+    assert resp.status_code == 200
+
+
 def test_extract_no_input_returns_422(client):
     c, _ = client
     resp = c.post("/api/extract")

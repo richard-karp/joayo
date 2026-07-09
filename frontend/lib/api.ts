@@ -11,8 +11,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function submitExtract(formData: FormData): Promise<{ job_id: string }> {
-  return request("/api/extract", { method: "POST", body: formData });
+const EXTRACT_CODE_KEY = "joayo_extract_code";
+
+// The extraction gate (X-Extract-Secret) — read from the passed value or the
+// browser-stored access code. Empty when unset (local dev leaves the gate open).
+function extractHeaders(secret?: string): Record<string, string> {
+  const code =
+    secret ??
+    (typeof window !== "undefined" ? localStorage.getItem(EXTRACT_CODE_KEY) ?? "" : "");
+  return code ? { "X-Extract-Secret": code } : {};
+}
+
+export async function submitExtract(formData: FormData, secret?: string): Promise<{ job_id: string }> {
+  return request("/api/extract", { method: "POST", body: formData, headers: extractHeaders(secret) });
 }
 
 export async function getJob(jobId: string): Promise<Job> {
@@ -61,7 +72,7 @@ export async function cancelJob(jobId: string): Promise<void> {
 }
 
 export async function resumeJob(jobId: string): Promise<void> {
-  await request(`/api/jobs/${jobId}/resume`, { method: "POST" });
+  await request(`/api/jobs/${jobId}/resume`, { method: "POST", headers: extractHeaders() });
 }
 
 export function exportUrl(jobId: string): string {
