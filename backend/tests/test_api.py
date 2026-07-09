@@ -412,7 +412,7 @@ def test_import_places_is_additive_and_preserves_votes(client, monkeypatch, tmp_
     s.add(Place(id=existing_id, location_name="Existing Place",
                 source_urls=["https://x/e"], is_place=True))
     new_id = str(uuid4())
-    s.add(Place(id=new_id, location_name="New Local Place",
+    s.add(Place(id=new_id, location_name="New Local Place", created_by_job_id="local-job-xyz",
                 source_urls=["https://x/n"], is_place=True, category="eat", subcategory="cafe"))
     s.commit()
     s.close()
@@ -431,7 +431,8 @@ def test_import_places_is_additive_and_preserves_votes(client, monkeypatch, tmp_
     session.expire_all()
     assert session.get(Place, existing_id) is not None                     # existing kept
     assert session.query(Vote).filter(Vote.place_id == existing_id).count() == 1  # vote kept
-    assert session.query(Place).filter(Place.location_name == "New Local Place").count() == 1
+    new_place = session.query(Place).filter(Place.location_name == "New Local Place").one()
+    assert new_place.created_by_job_id is None   # local job FK dropped on import
 
 
 def test_import_places_requires_admin(client):

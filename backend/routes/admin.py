@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import shutil
 import tempfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -378,7 +379,7 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
 
 
 @router.post("/import-places")
-async def import_places(
+def import_places(
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -390,12 +391,13 @@ async def import_places(
     prod extractions are preserved — never an overwrite), then runs the dedup pass to
     collapse near-duplicates and recomputes ambient-noise flags over the combined set.
 
-    Intended for pushing locally-extracted places up to a deployed instance.
+    Intended for pushing locally-extracted places up to a deployed instance. A plain
+    (non-async) handler so FastAPI runs its blocking DB work in a threadpool.
     """
-    data = await file.read()
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     try:
-        tmp.write(data)
+        # Stream the upload to disk rather than loading it all into memory.
+        shutil.copyfileobj(file.file, tmp)
         tmp.close()
 
         cols = [c.name for c in Place.__table__.columns]
@@ -417,6 +419,9 @@ async def import_places(
         for rec in incoming:
             if rec["id"] in existing_ids:
                 continue
+            # The source job isn't imported, so drop the local job FK to avoid a
+            # dangling reference in this DB.
+            rec["created_by_job_id"] = None
             db.add(Place(**rec))
             imported += 1
         if imported:
