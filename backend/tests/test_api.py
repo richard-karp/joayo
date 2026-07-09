@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 import main
 from database import Base, get_db
-from models import Job, Place
+from models import Job, Place, Vote
 
 
 @pytest.fixture()
@@ -389,3 +389,61 @@ def test_merge_duplicates_merges_exact_normalized_name(client, monkeypatch):
     session.expire_all()
     assert session.get(Place, dup_id) is None       # newer duplicate absorbed
     assert session.get(Place, kept_id) is not None   # older record kept
+
+
+# ── /api/admin/import-places ─────────────────────────────────────────────────
+
+def test_import_places_is_additive_and_preserves_votes(client, monkeypatch, tmp_path):
+    """Uploading a local DB adds only new places (by id); existing rows and their
+    votes are preserved (never an overwrite)."""
+    c, session = client
+    monkeypatch.setenv("ADMIN_TOKEN", "secret")
+
+    job_id = _seed_job(session)
+    existing_id = _add_place(session, job_id, "Existing Place", lat=37.50, lng=127.00)
+    session.add(Vote(id=str(uuid4()), place_id=existing_id, voter="default", value=1))
+    session.commit()
+
+    # Build a source DB: the existing place (same id) + one genuinely new place.
+    src_path = tmp_path / "local.db"
+    src_engine = create_engine(f"sqlite:///{src_path}")
+    Base.metadata.create_all(src_engine)
+    s = sessionmaker(bind=src_engine)()
+    s.add(Place(id=existing_id, location_name="Existing Place",
+                source_urls=["https://x/e"], is_place=True))
+    new_id = str(uuid4())
+    s.add(Place(id=new_id, location_name="New Local Place",
+                source_urls=["https://x/n"], is_place=True, category="eat", subcategory="cafe"))
+    s.commit()
+    s.close()
+    src_engine.dispose()
+
+    with open(src_path, "rb") as f:
+        resp = c.post(
+            "/api/admin/import-places",
+            headers={"X-Admin-Token": "secret"},
+            files={"file": ("local.db", f, "application/octet-stream")},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["imported"] == 1                      # only the new place, not the shared id
+
+    session.expire_all()
+    assert session.get(Place, existing_id) is not None                     # existing kept
+    assert session.query(Vote).filter(Vote.place_id == existing_id).count() == 1  # vote kept
+    assert session.query(Place).filter(Place.location_name == "New Local Place").count() == 1
+
+
+def test_import_places_requires_admin(client):
+    c, _ = client
+    resp = c.post("/api/admin/import-places",
+                  files={"file": ("x.db", b"not a db", "application/octet-stream")})
+    assert resp.status_code == 403
+
+
+def test_import_places_rejects_invalid_db(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setenv("ADMIN_TOKEN", "secret")
+    resp = c.post("/api/admin/import-places", headers={"X-Admin-Token": "secret"},
+                  files={"file": ("x.db", b"definitely not sqlite", "application/octet-stream")})
+    assert resp.status_code == 422

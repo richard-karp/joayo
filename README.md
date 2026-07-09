@@ -75,6 +75,21 @@ fly deploy                       # bakes the local places.db into the image
 **Frontend → Vercel** (root `frontend/`). Set `NEXT_PUBLIC_BACKEND_URL` to the Fly URL, then
 add that Vercel origin to the backend's `CORS_ORIGINS`.
 
+### Pushing local extractions to prod
+
+To extract locally (free, using cookies on your home IP) and add the results to the deployed
+DB **without overwriting** its data or votes, upload your local `places.db` to the import endpoint:
+
+```bash
+curl -H "X-Admin-Token: $ADMIN_TOKEN" \
+     -F "file=@backend/places.db" \
+     https://joayo-api.fly.dev/api/admin/import-places
+# → { "imported": 37, "merged": 4, "total": 1712 }
+```
+
+It inserts only places whose id isn't already present, then runs the dedup pass and recomputes
+ambient-noise flags. Existing rows, votes, and prod-side extractions are preserved.
+
 ## Self-hosting
 
 The repo is public but contains **no data and no secrets** (`places.db`, `.env`, and cookies are

@@ -1,13 +1,16 @@
 import math
 import os
 import re
+import tempfile
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from rapidfuzz import fuzz as _fuzz
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from database import get_db
 from models import Place, Vote
+from services import noise_filter
 from services.text_utils import _transcript_matches_caption, normalize_name
 
 router = APIRouter(prefix="/api/admin")
@@ -310,18 +313,14 @@ def backfill_normalized_names(request: Request, db: Session = Depends(get_db), _
     return {"updated": updated}
 
 
-@router.post("/merge-duplicates")
-def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = Depends(_require_admin)):
-    """Retroactive deduplication pass over all Place records.
+def _dedupe_places(db: Session) -> list[dict]:
+    """Retroactive dedup pass: merge each newer place into an older match and delete
+    the newer duplicate. Returns the kept/merged pairs. Shared by the merge endpoint
+    and the import endpoint.
 
-    For each place, checks whether an older record with a matching name and/or
-    coordinates already exists. If so, merges the newer record into the older one
-    (combining source_urls, authors, votes) and deletes the newer duplicate.
-
-    Records with no source_urls are skipped as both merge source and target. These are
-    manual restorations of a previous bad merge (source_urls emptied, summary
-    "Restored: ...") or empty artifacts — they carry no mentions to combine, and
-    re-merging them would silently clobber a human correction.
+    Records with no source_urls are skipped as both merge source and target — they are
+    manual restorations (source_urls emptied) or empty artifacts that carry no mentions
+    and must not be re-merged over a human correction.
     """
     places = db.query(Place).order_by(Place.created_at).all()
     # Snapshot coords before any _absorb calls mutate them, preventing coord-chaining
@@ -358,9 +357,78 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
 
     if pairs:
         db.commit()
+    return pairs
 
+
+@router.post("/merge-duplicates")
+def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = Depends(_require_admin)):
+    """Retroactive deduplication pass over all Place records.
+
+    For each place, checks whether an older record with a matching name and/or
+    coordinates already exists. If so, merges the newer record into the older one
+    (combining source_urls, authors, votes) and deletes the newer duplicate.
+    """
+    checked = db.query(Place).count()
+    pairs = _dedupe_places(db)
     return {
-        "checked": len(places),
+        "checked": checked,
         "merged": len(pairs),
         "merged_pairs": pairs,
     }
+
+
+@router.post("/import-places")
+async def import_places(
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_admin),
+):
+    """Additively merge places from an uploaded SQLite DB into this one.
+
+    Inserts only places whose id isn't already present (so existing rows, votes, and
+    prod extractions are preserved — never an overwrite), then runs the dedup pass to
+    collapse near-duplicates and recomputes ambient-noise flags over the combined set.
+
+    Intended for pushing locally-extracted places up to a deployed instance.
+    """
+    data = await file.read()
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    try:
+        tmp.write(data)
+        tmp.close()
+
+        cols = [c.name for c in Place.__table__.columns]
+        src_engine = create_engine(f"sqlite:///{tmp.name}")
+        try:
+            src = sessionmaker(bind=src_engine)()
+            try:
+                # Materialize plain dicts while the source session is open.
+                incoming = [{c: getattr(r, c) for c in cols} for r in src.query(Place).all()]
+            finally:
+                src.close()
+        except Exception:
+            raise HTTPException(status_code=422, detail="Uploaded file is not a valid places database")
+        finally:
+            src_engine.dispose()
+
+        existing_ids = {row[0] for row in db.query(Place.id).all()}
+        imported = 0
+        for rec in incoming:
+            if rec["id"] in existing_ids:
+                continue
+            db.add(Place(**rec))
+            imported += 1
+        if imported:
+            db.commit()
+
+        pairs = _dedupe_places(db)
+        noise_filter.flag_ambient_places(db)
+
+        return {
+            "imported": imported,
+            "merged": len(pairs),
+            "total": db.query(Place).count(),
+        }
+    finally:
+        os.unlink(tmp.name)
