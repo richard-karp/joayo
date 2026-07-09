@@ -105,7 +105,7 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-zinc-50">
       <header className="bg-white border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
         <div>
-          <h1 className="font-bold text-zinc-900 text-lg tracking-tight">Place Extractor</h1>
+          <h1 className="font-bold text-zinc-900 text-lg tracking-tight">joayo</h1>
           <p className="text-xs text-zinc-400">Locations extracted from social posts</p>
         </div>
         <div className="flex items-center gap-2">

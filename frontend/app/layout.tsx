@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Place Extractor",
-  description: "Extract and map locations from social media posts",
+  title: "joayo",
+  description: "Discover places worth going, extracted from social posts",
 };
 
 export default function RootLayout({

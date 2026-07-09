@@ -23,7 +23,7 @@ export default function ExtractPage() {
       <header className="bg-white border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
         <div>
           <Link href="/" className="font-bold text-zinc-900 text-lg tracking-tight hover:text-blue-600 transition-colors">
-            Place Extractor
+            joayo
           </Link>
           <p className="text-xs text-zinc-400">Extract and map locations from social posts</p>
         </div>
