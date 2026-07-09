@@ -197,6 +197,45 @@ def test_real_places_not_flagged_generic(name):
     assert _is_generic_name(name) is False
 
 
+# ── /api/filters facet counts ────────────────────────────────────────────────
+
+def _add_faceted_place(session, job_id, name, *, country, city,
+                       is_place=True, is_context=False):
+    pid = str(uuid4())
+    session.add(Place(
+        id=pid, created_by_job_id=job_id,
+        source_urls=["https://x/" + pid], platform="instagram",
+        primary_author="u", primary_author_id="1",
+        all_authors=[{"username": "u", "platform_id": "1", "platform": "instagram"}],
+        location_name=name, category="eat", subcategory="restaurant",
+        country=country, city=city, is_place=is_place, is_context=is_context,
+        summary="", labels=[], insider_tips="",
+        raw_caption="", tagged_accounts=[], transcript_missing=False,
+    ))
+    session.commit()
+    return pid
+
+
+def test_filters_counts_only_real_non_context_places(client):
+    """Facet counts must count actual places only — is_place=False items (dishes,
+    products) and is_context ambient rows must be excluded, even though they share
+    a country/city with a real place."""
+    c, session = client
+    job_id = _seed_job(session)
+    _add_faceted_place(session, job_id, "Real Restaurant", country="South Korea", city="Seoul")
+    _add_faceted_place(session, job_id, "A Dish", country="South Korea", city="Seoul",
+                       is_place=False)
+    _add_faceted_place(session, job_id, "Home Base", country="South Korea", city="Seoul",
+                       is_context=True)
+
+    resp = c.get("/api/filters")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Only the single real, non-context place is counted — not the dish or the context row.
+    assert data["countries"] == [{"name": "South Korea", "place_count": 1}]
+    assert data["cities"] == [{"name": "Seoul", "country": "South Korea", "place_count": 1}]
+
+
 # ── /api/admin/merge-duplicates ──────────────────────────────────────────────
 
 def _add_place(session, job_id, name, *, category="see_visit", subcategory="landmark",

@@ -2,19 +2,11 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from database import SessionLocal
+from database import get_db
 from models import Place, Vote
 from schemas import PlaceResponse, Author
 
 router = APIRouter()
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def _to_response(place: Place, score: int, current_vote_val: int | None) -> PlaceResponse:
@@ -94,9 +86,14 @@ def get_places(
 
 @router.get("/api/filters")
 def get_filters(db: Session = Depends(get_db)):
+    # Facet counts reflect actual places only — exclude non-place items
+    # (dishes, products, tips) and ambient-context rows, matching the default
+    # /api/places list. Without this, counts include is_place=False rows.
     country_rows = (
         db.query(Place.country, func.count(Place.id))
         .filter(Place.country.isnot(None))
+        .filter(Place.is_place.is_(True))
+        .filter(Place.is_context.isnot(True))
         .group_by(Place.country)
         .order_by(func.count(Place.id).desc())
         .all()
@@ -104,6 +101,8 @@ def get_filters(db: Session = Depends(get_db)):
     city_rows = (
         db.query(Place.city, Place.country, func.count(Place.id))
         .filter(Place.city.isnot(None))
+        .filter(Place.is_place.is_(True))
+        .filter(Place.is_context.isnot(True))
         .group_by(Place.city, Place.country)
         .order_by(func.count(Place.id).desc())
         .all()
