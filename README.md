@@ -66,7 +66,7 @@ cd backend
 # sidecar, so the seed is complete either way.
 sqlite3 places.db "PRAGMA wal_checkpoint(TRUNCATE);"
 fly launch --no-deploy          # or `fly apps create joayo-api`
-fly volumes create joayo_data --size 1 --region nrt  # must match fly.toml primary_region
+fly volumes create joayo_data --size 1 --region yyz  # must match fly.toml primary_region
 fly secrets set ANTHROPIC_API_KEY=... APIFY_API_TOKEN=... KAKAO_REST_API_KEY=... \
                 EXTRACT_SECRET=... CORS_ORIGINS=https://<your-app>.vercel.app
 fly deploy                       # bakes the local places.db into the image
