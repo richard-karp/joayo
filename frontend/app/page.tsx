@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CategoryView from "@/components/CategoryView";
 import CreatorCard from "@/components/CreatorCard";
 import Filters from "@/components/Filters";
@@ -51,10 +51,12 @@ export default function DashboardPage() {
     });
   }, []);
 
+  const placesReqRef = useRef(0);
   useEffect(() => {
     if (!selectedCountry && filters && filters.countries.length > 1) return;
     // Debounce so typing in the search box doesn't fire a request per keystroke.
     const handle = setTimeout(() => {
+      const reqId = ++placesReqRef.current;
       getPlaces({
         country: selectedCountry ?? undefined,
         city: selectedCity ?? undefined,
@@ -62,6 +64,8 @@ export default function DashboardPage() {
         label: selectedLabel ?? undefined,
         q: search.trim() || undefined,
       }).then((data) => {
+        // Ignore a stale response if a newer request has since been issued.
+        if (reqId !== placesReqRef.current) return;
         setPlaces(data);
         setLoading(false);
       });

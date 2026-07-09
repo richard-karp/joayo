@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import String, cast, func, or_
+from sqlalchemy import String, cast, func, or_, text
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -67,21 +67,26 @@ def get_places(
         query = query.filter(Place.city == city)
     if subcategory:
         query = query.filter(Place.subcategory == subcategory)
+    if label:
+        # Exact membership in the JSON labels array, evaluated in SQL (SQLite json_each)
+        # so the DB filters rather than materializing every row first.
+        query = query.filter(
+            text("EXISTS (SELECT 1 FROM json_each(places.labels) WHERE value = :label)")
+            .bindparams(label=label)
+        )
     if q:
-        like = f"%{q}%"
+        # Escape LIKE metacharacters so a literal % or _ in the query is matched
+        # verbatim rather than acting as a wildcard. (Escape the backslash first.)
+        escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped}%"
         # labels is a JSON array; cast to text so a substring match hits any element.
         query = query.filter(or_(
-            Place.location_name.ilike(like),
-            Place.summary.ilike(like),
-            Place.subcategory.ilike(like),
-            cast(Place.labels, String).ilike(like),
+            Place.location_name.ilike(like, escape="\\"),
+            Place.summary.ilike(like, escape="\\"),
+            Place.subcategory.ilike(like, escape="\\"),
+            cast(Place.labels, String).ilike(like, escape="\\"),
         ))
     places = query.order_by(Place.created_at.desc()).all()
-
-    # Exact label membership is a JSON-array test — cheap to do in Python over the
-    # already-filtered rows, and avoids brittle JSON-substring SQL.
-    if label:
-        places = [p for p in places if label in (p.labels or [])]
 
     # Compute vote scores in bulk
     scores = {

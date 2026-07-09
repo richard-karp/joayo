@@ -279,6 +279,18 @@ def test_get_places_filter_by_label_is_exact(client):
     assert names == ["Leeum"]  # exact label match only — not the 'nail art' row
 
 
+def test_search_treats_like_metacharacters_literally(client):
+    """A '_' (or '%') in the query must match literally, not as a SQL LIKE wildcard."""
+    c, session = client
+    job_id = _seed_job(session)
+    # Both use subcategory 'cafe' (no "a_t" substring) so only the name can match.
+    _add_faceted_place(session, job_id, "A_tag", category="eat", subcategory="cafe")   # literal _
+    _add_faceted_place(session, job_id, "AXtag", category="eat", subcategory="cafe")   # X where _ would wildcard-match
+
+    names = {p["location_name"] for p in c.get("/api/places?q=a_t").json()}
+    assert names == {"A_tag"}  # underscore is literal — "AXtag" must NOT match
+
+
 def test_get_places_search_matches_name_and_labels(client):
     c, session = client
     job_id = _seed_job(session)

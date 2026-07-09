@@ -67,7 +67,9 @@ export default function PlaceCard({ place, onClose, activeLabel, onLabelClick }:
                   className={`px-2 py-0.5 rounded-full text-xs transition-colors ${
                     isActive
                       ? "bg-zinc-900 text-white"
-                      : "bg-zinc-100 text-zinc-600 enabled:hover:bg-zinc-200 enabled:cursor-pointer"
+                      : onLabelClick
+                        ? "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 cursor-pointer"
+                        : "bg-zinc-100 text-zinc-600"
                   }`}
                 >
                   {label}
