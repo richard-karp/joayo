@@ -1,30 +1,29 @@
-# Fly.io config for the joayo backend (FastAPI + SQLite).
-# `fly launch` may rename the app / adjust regions — this is a sensible starting point.
-app = "joayo-api"
-primary_region = "nrt"  # Tokyo — close to Korea
+# fly.toml app configuration file generated for joayo-api on 2026-07-09T15:02:06-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'joayo-api'
+primary_region = 'yyz'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  DB_PATH = "/data/places.db"
-  # CORS_ORIGINS and EXTRACT_SECRET / API keys are set as secrets:
-  #   fly secrets set ANTHROPIC_API_KEY=... APIFY_API_TOKEN=... KAKAO_REST_API_KEY=... \
-  #                   EXTRACT_SECRET=... CORS_ORIGINS=https://<your>.vercel.app
+  DB_PATH = '/data/places.db'
 
-# Persistent volume holds the live DB (seeded once from the baked image copy).
-# Create it with: fly volumes create joayo_data --size 1 --region nrt
-[mounts]
-  source = "joayo_data"
-  destination = "/data"
+[[mounts]]
+  source = 'joayo_data'
+  destination = '/data'
 
 [http_service]
   internal_port = 8000
   force_https = true
-  # Keep one machine warm so background extraction jobs aren't killed mid-run.
-  auto_stop_machines = "off"
+  auto_stop_machines = 'off'
   min_machines_running = 1
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'
+  cpus = 1
+  memory_mb = 512
