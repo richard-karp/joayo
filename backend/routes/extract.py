@@ -1,3 +1,4 @@
+import hmac
 import os
 import re
 import time
@@ -29,7 +30,7 @@ def require_extract_secret(x_extract_secret: Optional[str] = Header(None)):
     X-Extract-Secret header. When it is unset (local dev), extraction is open.
     """
     secret = os.getenv("EXTRACT_SECRET")
-    if secret and x_extract_secret != secret:
+    if secret and not hmac.compare_digest(x_extract_secret or "", secret):
         raise HTTPException(status_code=401, detail="Invalid or missing extract access code")
 
 

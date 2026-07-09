@@ -62,7 +62,8 @@ write to that volume.
 
 ```bash
 cd backend
-# consolidate any pending WAL so the baked seed is current:
+# Optional: consolidate the WAL into places.db. The build also bakes the -wal
+# sidecar, so the seed is complete either way.
 sqlite3 places.db "PRAGMA wal_checkpoint(TRUNCATE);"
 fly launch --no-deploy          # or `fly apps create joayo-api`
 fly volumes create joayo_data --size 1 --region nrt

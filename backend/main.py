@@ -46,7 +46,9 @@ _origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
-    allow_credentials=True,
+    # No cookies/credentials are used (the extract gate is a custom header), and
+    # credentials + a wildcard origin is an invalid/footgun combo — keep it off.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

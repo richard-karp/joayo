@@ -10,7 +10,7 @@ tests/
 .env
 .env.*
 
-# Include places.db (baked seed) but NOT its WAL sidecars or local backups.
-places.db-wal
+# Bake places.db AND its -wal sidecar (so uncheckpointed data isn't lost — SQLite
+# replays the WAL on first open). Exclude the regenerated -shm and local backups.
 places.db-shm
 places.db.*
