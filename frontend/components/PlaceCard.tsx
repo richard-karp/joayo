@@ -10,13 +10,14 @@ interface Props {
   onClose: () => void;
   activeLabel?: string | null;
   onLabelClick?: (label: string) => void;
+  className?: string;
 }
 
-export default function PlaceCard({ place, onClose, activeLabel, onLabelClick }: Props) {
+export default function PlaceCard({ place, onClose, activeLabel, onLabelClick, className = "mt-4" }: Props) {
   const mentionCount = place.source_urls.length;
 
   return (
-    <Card className="mt-4">
+    <Card className={className}>
       <CardHeader className="pb-2 pt-4">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useState } from "react";
-import MapGL, { Marker, Popup } from "react-map-gl/mapbox";
+import { useCallback, useEffect, useRef, useState } from "react";
+import MapGL, { Marker, Popup, type MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Category, Place } from "@/types";
 import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
@@ -20,10 +20,13 @@ const PIN_COLORS: Record<Category, string> = {
 
 interface Props {
   places: Place[];
-  highlightedPlaceId: string | null;
+  /** Ids of the places currently expanded in the list — their pins are enlarged and the map fits to them. */
+  highlightedPlaceIds: string[];
 }
 
-export default function Map({ places, highlightedPlaceId }: Props) {
+export default function Map({ places, highlightedPlaceIds }: Props) {
+  const mapRef = useRef<MapRef>(null);
+  const [mapReady, setMapReady] = useState(false);
   const [popup, setPopup] = useState<Place | null>(null);
   const [localPlaces, setLocalPlaces] = useState<Place[]>(places);
 
@@ -32,6 +35,43 @@ export default function Map({ places, highlightedPlaceId }: Props) {
   }
 
   const mappable = localPlaces.filter((p) => p.lat != null && p.lng != null);
+  const highlightedSet = new Set(highlightedPlaceIds);
+
+  // Fit to the highlighted pins when any are active, otherwise to every pin.
+  const activePins = mappable.filter((p) => highlightedSet.has(p.id));
+  const focusPins = activePins.length > 0 ? activePins : mappable;
+  const focusKey = focusPins.map((p) => p.id).sort().join("|");
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    // The mapbox instance mounts asynchronously and its `load`/`idle` events are
+    // unreliable here (the prop callback can be missed, and background tabs pause
+    // WebGL so `idle` may never fire), so poll for the ref with setTimeout (rAF is
+    // frozen in background tabs). Once the map instance exists it can accept a
+    // camera move; fitBounds only repositions the camera and doesn't need a
+    // fully-loaded style.
+    const check = () => {
+      if (mapRef.current?.getMap?.()) setMapReady(true);
+      else timer = setTimeout(check, 80);
+    };
+    check();
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!mapReady || focusPins.length === 0) return;
+    const lngs = focusPins.map((p) => p.lng!);
+    const lats = focusPins.map((p) => p.lat!);
+    mapRef.current?.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: 64, maxZoom: 14, duration: 600 },
+    );
+    // focusPins is captured via focusKey; re-fitting only when the set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady, focusKey]);
 
   const handleVote = useCallback(
     async (place: Place, vote: "up" | "down" | null) => {
@@ -64,6 +104,7 @@ export default function Map({ places, highlightedPlaceId }: Props) {
 
   return (
     <MapGL
+      ref={mapRef}
       mapboxAccessToken={TOKEN}
       initialViewState={{
         ...bounds,
@@ -74,7 +115,7 @@ export default function Map({ places, highlightedPlaceId }: Props) {
     >
       {mappable.map((place) => {
         const color = place.category ? PIN_COLORS[place.category as Category] : "#6b7280";
-        const isHighlighted = place.id === highlightedPlaceId;
+        const isHighlighted = highlightedSet.has(place.id);
         return (
           <Marker
             key={place.id}

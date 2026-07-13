@@ -1,20 +1,24 @@
 'use client';
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Badge } from "@/components/ui/badge";
+import PlaceCard from "@/components/PlaceCard";
 import type { Category, Place } from "@/types";
 import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
 
 interface Props {
   places: Place[];
-  selectedPlaceId: string | null;
+  expandedIds: string[];
   onPlaceClick: (placeId: string) => void;
+  activeLabel: string | null;
+  onLabelClick: (label: string) => void;
 }
 
 const CATEGORY_ORDER: Category[] = ["eat", "see_visit", "do", "shop", "service", "guide"];
 
-export default function CategoryView({ places, selectedPlaceId, onPlaceClick }: Props) {
+export default function CategoryView({ places, expandedIds, onPlaceClick, activeLabel, onLabelClick }: Props) {
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
+  const expanded = new Set(expandedIds);
 
   const placePlaces = places.filter((p) => p.is_place);
 
@@ -73,34 +77,59 @@ export default function CategoryView({ places, selectedPlaceId, onPlaceClick }: 
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
-          {filtered.map((place) => (
-            <tr
-              key={place.id}
-              className={`cursor-pointer transition-colors hover:bg-zinc-50 ${
-                selectedPlaceId === place.id ? "bg-zinc-100" : ""
-              }`}
-              onClick={() => onPlaceClick(place.id)}
-            >
-              <td className="py-2 font-medium text-zinc-900">
-                <span className="block truncate max-w-[200px]">{place.location_name}</span>
-                {place.city && (
-                  <span className="text-xs text-zinc-400 font-normal">{place.city}</span>
-                )}
-              </td>
-              {!activeCategory && (
-                <td className="py-2 hidden sm:table-cell">
-                  {place.category && (
-                    <Badge className={`text-xs py-0 ${CATEGORY_COLORS[place.category as Category]}`}>
-                      {CATEGORY_LABELS[place.category as Category]}
-                    </Badge>
+          {filtered.map((place) => {
+            const isExpanded = expanded.has(place.id);
+            return (
+              <Fragment key={place.id}>
+                <tr
+                  className={`cursor-pointer transition-colors hover:bg-zinc-50 ${
+                    isExpanded ? "bg-zinc-100" : ""
+                  }`}
+                  onClick={() => onPlaceClick(place.id)}
+                >
+                  <td className="py-2 font-medium text-zinc-900">
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className={`text-zinc-400 text-[0.7rem] transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                        aria-hidden
+                      >
+                        ▸
+                      </span>
+                      <span className="truncate max-w-[200px]">{place.location_name}</span>
+                    </span>
+                    {place.city && (
+                      <span className="block pl-4 text-xs text-zinc-400 font-normal">{place.city}</span>
+                    )}
+                  </td>
+                  {!activeCategory && (
+                    <td className="py-2 hidden sm:table-cell">
+                      {place.category && (
+                        <Badge className={`text-xs py-0 ${CATEGORY_COLORS[place.category as Category]}`}>
+                          {CATEGORY_LABELS[place.category as Category]}
+                        </Badge>
+                      )}
+                    </td>
                   )}
-                </td>
-              )}
-              <td className="py-2 text-right tabular-nums text-zinc-500">
-                {place.source_urls.length}
-              </td>
-            </tr>
-          ))}
+                  <td className="py-2 text-right tabular-nums text-zinc-500">
+                    {place.source_urls.length}
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr>
+                    <td colSpan={activeCategory ? 2 : 3} className="p-0">
+                      <PlaceCard
+                        place={place}
+                        className="mb-3 mt-1"
+                        activeLabel={activeLabel}
+                        onLabelClick={onLabelClick}
+                        onClose={() => onPlaceClick(place.id)}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
