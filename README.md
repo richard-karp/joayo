@@ -78,16 +78,15 @@ add that Vercel origin to the backend's `CORS_ORIGINS`.
 ### Pushing local extractions to prod
 
 To extract locally (free, using cookies on your home IP) and add the results to the deployed
-DB **without overwriting** its data or votes, upload your local `places.db` to the import endpoint:
+DB **without overwriting** its data or votes, stop the local backend and run:
 
 ```bash
-curl -H "X-Admin-Token: $ADMIN_TOKEN" \
-     -F "file=@backend/places.db" \
-     https://joayo-api.fly.dev/api/admin/import-places
+ADMIN_TOKEN=<your-token> ./scripts/push-to-prod.sh
 # → { "imported": 37, "merged": 4, "total": 1712 }
 ```
 
-It inserts only places whose id isn't already present, then runs the dedup pass and recomputes
+The script consolidates the local WAL then uploads `places.db` to `POST /api/admin/import-places`,
+which inserts only places whose id isn't already present, runs the dedup pass, and recomputes
 ambient-noise flags. Existing rows, votes, and prod-side extractions are preserved.
 
 ## Self-hosting
