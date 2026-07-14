@@ -36,14 +36,20 @@ from .env locally). Without it, coordinates can't be reverse-geocoded and every
 outlier falls into needs_review — the script warns when it detects that.
 """
 import argparse
+import os
 
 from dotenv import find_dotenv, load_dotenv
 
 load_dotenv(find_dotenv(raise_error_if_not_found=False))
+# Resolve the DB relative to this file (not the CWD) unless DB_PATH is already set,
+# so the script hits backend/places.db no matter where it's launched from, while
+# production's absolute DB_PATH (the Fly volume) still takes precedence.
+os.environ.setdefault("DB_PATH", os.path.join(os.path.dirname(__file__), "places.db"))
 
-from database import SessionLocal  # noqa: E402  (import after dotenv is loaded)
+from database import SessionLocal  # noqa: E402  (import after DB_PATH is resolved)
 from models import Place  # noqa: E402
 from routes.admin import reconcile_cities  # noqa: E402
+from services.geocoder import city_from_coords  # noqa: E402
 
 MAX_PASSES = 10
 
@@ -73,9 +79,15 @@ def patch_known_rows(db) -> list[str]:
     for p in db.query(Place).filter(
         Place.location_name == "Monghwan", Place.city == "Ansan"
     ).all():
+        # Coords win — only relabel if the coordinate actually reverse-geocodes to
+        # Gwangju, so a genuinely-Ansan "Monghwan" (correct Gyeonggi coords) is left
+        # alone. (If the Kakao key is missing, city_from_coords returns None and the
+        # row is conservatively skipped.)
+        if p.lat is None or p.lng is None or city_from_coords(p.lat, p.lng) != "Gwangju":
+            continue
         patched.append(
             f"Monghwan: city 'Ansan' -> 'Gwangju' "
-            f"(coord ({p.lat:.4f},{p.lng:.4f}) is in Gwangju)"
+            f"(coord ({p.lat:.4f},{p.lng:.4f}) reverse-geocodes to Gwangju)"
         )
         p.city = "Gwangju"
 
