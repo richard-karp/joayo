@@ -40,6 +40,20 @@ export default function DashboardPage() {
   // Places / categories view state — ids of the rows expanded inline in the list.
   const [expandedPlaceIds, setExpandedPlaceIds] = useState<string[]>([]);
 
+  // Collapse any inline-expanded rows whenever the underlying result set changes
+  // (country/city/subcategory/label/search), so a lingering id can't silently
+  // re-expand a row that later scrolls back into the same list. Done during render
+  // (React's "adjust state on change" pattern) rather than in an effect, to avoid
+  // a cascading post-render re-render.
+  const filterKey = JSON.stringify([
+    selectedCountry, selectedCity, selectedSubcategory, selectedLabel, search,
+  ]);
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setExpandedPlaceIds([]);
+  }
+
   useEffect(() => {
     getFilters().then((data) => {
       setFilters(data);

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MapGL, { Marker, Popup, type MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Category, Place } from "@/types";
@@ -61,26 +61,36 @@ export default function Map({ places, highlightedPlaceIds }: Props) {
     setLocalPlaces(places);
   }
 
-  const mappable = localPlaces.filter((p) => p.lat != null && p.lng != null);
-  const highlightedSet = new Set(highlightedPlaceIds);
+  const mappable = useMemo(
+    () => localPlaces.filter((p) => p.lat != null && p.lng != null),
+    [localPlaces],
+  );
+  const highlightedSet = useMemo(() => new Set(highlightedPlaceIds), [highlightedPlaceIds]);
 
   // Fit to the highlighted pins when any are active, otherwise to every pin.
-  const activePins = mappable.filter((p) => highlightedSet.has(p.id));
-  const focusPins = activePins.length > 0 ? activePins : mappable;
-  const focusKey = focusPins.map((p) => p.id).sort().join("|");
+  // Memoized together so the sort/join and the haversine outlier pass only run
+  // when the mappable set or the highlight set actually changes — not on every
+  // render (popup open, vote, mapReady flip, …).
+  const { focusKey, fitPins } = useMemo(() => {
+    const activePins = mappable.filter((p) => highlightedSet.has(p.id));
+    const focusPins = activePins.length > 0 ? activePins : mappable;
+    const key = focusPins.map((p) => p.id).sort().join("|");
 
-  // For the full (unexpanded) set, drop far-flung pins from the camera bounds only —
-  // all pins still render. Expanded pins are fit exactly as chosen; a handful of pins
-  // are always fit whole (the median isn't meaningful with too few points).
-  const fitPins = (() => {
-    if (activePins.length > 0 || focusPins.length < MIN_PINS_TO_TRIM) return focusPins;
-    const mLat = median(focusPins.map((p) => p.lat!));
-    const mLng = median(focusPins.map((p) => p.lng!));
-    const kept = focusPins.filter(
-      (p) => haversineM(p.lat!, p.lng!, mLat, mLng) <= OUTLIER_FIT_RADIUS_M,
-    );
-    return kept.length > 0 ? kept : focusPins;
-  })();
+    // For the full (unexpanded) set, drop far-flung pins from the camera bounds
+    // only — all pins still render. Expanded pins are fit exactly as chosen; a
+    // handful of pins are always fit whole (the median isn't meaningful with too
+    // few points).
+    let pins = focusPins;
+    if (activePins.length === 0 && focusPins.length >= MIN_PINS_TO_TRIM) {
+      const mLat = median(focusPins.map((p) => p.lat!));
+      const mLng = median(focusPins.map((p) => p.lng!));
+      const kept = focusPins.filter(
+        (p) => haversineM(p.lat!, p.lng!, mLat, mLng) <= OUTLIER_FIT_RADIUS_M,
+      );
+      if (kept.length > 0) pins = kept;
+    }
+    return { focusKey: key, fitPins: pins };
+  }, [mappable, highlightedSet]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
