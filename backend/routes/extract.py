@@ -342,6 +342,13 @@ def process_job(job_id: str, posts: list[dict]):
                                 geocoder._normalize_expected_city(extracted_place.city),
                                 geo.city,
                             ):
+                                # Defense-in-depth: for South Korea this branch is
+                                # currently unreachable — geocode_full already discards
+                                # a region-conflicting Kakao result (returns empty, so
+                                # geo.city is None here), and kept results are
+                                # conflict-free by construction. Retained so the label
+                                # is still corrected if geocode_full ever keeps
+                                # conflicting coordinates instead of dropping them.
                                 extracted_place.city = geo.city
                     else:
                         lat, lng = None, None
