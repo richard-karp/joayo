@@ -7,7 +7,6 @@ import CategoryView from "@/components/CategoryView";
 import CreatorCard from "@/components/CreatorCard";
 import Filters from "@/components/Filters";
 import Leaderboard from "@/components/Leaderboard";
-import PlaceCard from "@/components/PlaceCard";
 import PlacesRanking from "@/components/PlacesRanking";
 import { getFilters, getPlaces, exportAllUrl } from "@/lib/api";
 import type { Category, Place } from "@/types";
@@ -38,9 +37,22 @@ export default function DashboardPage() {
   const [authorFilter, setAuthorFilter] = useState<string | null>(null);
   const [selectedCreator, setSelectedCreator] = useState<string | null>(null);
 
-  // Places / categories view state
-  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
-  const [highlightedPlaceId, setHighlightedPlaceId] = useState<string | null>(null);
+  // Places / categories view state — ids of the rows expanded inline in the list.
+  const [expandedPlaceIds, setExpandedPlaceIds] = useState<string[]>([]);
+
+  // Collapse any inline-expanded rows whenever the underlying result set changes
+  // (country/city/subcategory/label/search), so a lingering id can't silently
+  // re-expand a row that later scrolls back into the same list. Done during render
+  // (React's "adjust state on change" pattern) rather than in an effect, to avoid
+  // a cascading post-render re-render.
+  const filterKey = JSON.stringify([
+    selectedCountry, selectedCity, selectedSubcategory, selectedLabel, search,
+  ]);
+  const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
+  if (filterKey !== prevFilterKey) {
+    setPrevFilterKey(filterKey);
+    setExpandedPlaceIds([]);
+  }
 
   useEffect(() => {
     getFilters().then((data) => {
@@ -88,11 +100,11 @@ export default function DashboardPage() {
   }, []);
 
   const handlePlaceClick = useCallback((placeId: string) => {
-    setSelectedPlaceId((prev) => (prev === placeId ? null : placeId));
-    setHighlightedPlaceId(placeId);
+    setExpandedPlaceIds((prev) =>
+      prev.includes(placeId) ? prev.filter((id) => id !== placeId) : [...prev, placeId],
+    );
   }, []);
 
-  const selectedPlace = places.find((p) => p.id === selectedPlaceId) ?? null;
   const needsPicker = filters && filters.countries.length > 1 && !selectedCountry;
 
   const VIEW_TABS: { id: View; label: string }[] = [
@@ -206,7 +218,7 @@ export default function DashboardPage() {
                   key={tab.id}
                   onClick={() => {
                     setView(tab.id);
-                    setSelectedPlaceId(null);
+                    setExpandedPlaceIds([]);
                     setSelectedCreator(null);
                     setAuthorFilter(null);
                   }}
@@ -288,7 +300,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="sticky top-6 space-y-0">
                     <div className="h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
-                      <Map places={places} highlightedPlaceId={highlightedPlaceId} />
+                      <Map places={places} highlightedPlaceIds={[]} />
                     </div>
                     {selectedCreator && (
                       <CreatorCard
@@ -311,25 +323,16 @@ export default function DashboardPage() {
                 <div>
                   <PlacesRanking
                     places={places}
-                    selectedPlaceId={selectedPlaceId}
+                    expandedIds={expandedPlaceIds}
                     onPlaceClick={handlePlaceClick}
+                    activeLabel={selectedLabel}
+                    onLabelClick={handleLabelClick}
                   />
                 </div>
                 <div className="sticky top-6">
                   <div className="h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
-                    <Map places={places} highlightedPlaceId={highlightedPlaceId} />
+                    <Map places={places} highlightedPlaceIds={expandedPlaceIds} />
                   </div>
-                  {selectedPlace && (
-                    <PlaceCard
-                      place={selectedPlace}
-                      activeLabel={selectedLabel}
-                      onLabelClick={handleLabelClick}
-                      onClose={() => {
-                        setSelectedPlaceId(null);
-                        setHighlightedPlaceId(null);
-                      }}
-                    />
-                  )}
                 </div>
               </div>
             )}
@@ -340,25 +343,16 @@ export default function DashboardPage() {
                 <div>
                   <CategoryView
                     places={places}
-                    selectedPlaceId={selectedPlaceId}
+                    expandedIds={expandedPlaceIds}
                     onPlaceClick={handlePlaceClick}
+                    activeLabel={selectedLabel}
+                    onLabelClick={handleLabelClick}
                   />
                 </div>
                 <div className="sticky top-6">
                   <div className="h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
-                    <Map places={places} highlightedPlaceId={highlightedPlaceId} />
+                    <Map places={places} highlightedPlaceIds={expandedPlaceIds} />
                   </div>
-                  {selectedPlace && (
-                    <PlaceCard
-                      place={selectedPlace}
-                      activeLabel={selectedLabel}
-                      onLabelClick={handleLabelClick}
-                      onClose={() => {
-                        setSelectedPlaceId(null);
-                        setHighlightedPlaceId(null);
-                      }}
-                    />
-                  )}
                 </div>
               </div>
             )}

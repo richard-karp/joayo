@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useState } from "react";
-import MapGL, { Marker, Popup } from "react-map-gl/mapbox";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import MapGL, { Marker, Popup, type MapRef } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 import type { Category, Place } from "@/types";
 import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
@@ -18,20 +18,111 @@ const PIN_COLORS: Record<Category, string> = {
   guide: "#eab308",
 };
 
-interface Props {
-  places: Place[];
-  highlightedPlaceId: string | null;
+// Camera-fit outlier trimming: a lone stray pin (e.g. a not-yet-reconciled bad row)
+// shouldn't stretch the viewport and squash the real cluster into a corner.
+const OUTLIER_FIT_RADIUS_M = 150_000; // pins farther than this from the median are excluded from the bounds
+const MIN_PINS_TO_TRIM = 5;           // with only a few pins the median is unreliable — fit them all
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-export default function Map({ places, highlightedPlaceId }: Props) {
+function haversineM(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dPhi = toRad(lat2 - lat1);
+  const dLambda = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dPhi / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLambda / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+interface Props {
+  places: Place[];
+  /** Ids of the places currently expanded in the list — their pins are enlarged and the map fits to them. */
+  highlightedPlaceIds: string[];
+}
+
+export default function Map({ places, highlightedPlaceIds }: Props) {
+  const mapRef = useRef<MapRef>(null);
+  const [mapReady, setMapReady] = useState(false);
   const [popup, setPopup] = useState<Place | null>(null);
   const [localPlaces, setLocalPlaces] = useState<Place[]>(places);
+  const [prevPlaces, setPrevPlaces] = useState(places);
 
-  if (places !== localPlaces && places.length !== localPlaces.length) {
+  // Re-sync whenever the parent passes a new `places` array (any filter/refetch),
+  // while preserving optimistic vote updates (which mutate localPlaces but not the
+  // prop, so their reference is unchanged and not clobbered here).
+  if (places !== prevPlaces) {
+    setPrevPlaces(places);
     setLocalPlaces(places);
   }
 
-  const mappable = localPlaces.filter((p) => p.lat != null && p.lng != null);
+  const mappable = useMemo(
+    () => localPlaces.filter((p) => p.lat != null && p.lng != null),
+    [localPlaces],
+  );
+  const highlightedSet = useMemo(() => new Set(highlightedPlaceIds), [highlightedPlaceIds]);
+
+  // Fit to the highlighted pins when any are active, otherwise to every pin.
+  // Memoized together so the sort/join and the haversine outlier pass only run
+  // when the mappable set or the highlight set actually changes — not on every
+  // render (popup open, vote, mapReady flip, …).
+  const { focusKey, fitPins } = useMemo(() => {
+    const activePins = mappable.filter((p) => highlightedSet.has(p.id));
+    const focusPins = activePins.length > 0 ? activePins : mappable;
+    const key = focusPins.map((p) => p.id).sort().join("|");
+
+    // For the full (unexpanded) set, drop far-flung pins from the camera bounds
+    // only — all pins still render. Expanded pins are fit exactly as chosen; a
+    // handful of pins are always fit whole (the median isn't meaningful with too
+    // few points).
+    let pins = focusPins;
+    if (activePins.length === 0 && focusPins.length >= MIN_PINS_TO_TRIM) {
+      const mLat = median(focusPins.map((p) => p.lat!));
+      const mLng = median(focusPins.map((p) => p.lng!));
+      const kept = focusPins.filter(
+        (p) => haversineM(p.lat!, p.lng!, mLat, mLng) <= OUTLIER_FIT_RADIUS_M,
+      );
+      if (kept.length > 0) pins = kept;
+    }
+    return { focusKey: key, fitPins: pins };
+  }, [mappable, highlightedSet]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    // The mapbox instance mounts asynchronously and its `load`/`idle` events are
+    // unreliable here (the prop callback can be missed, and background tabs pause
+    // WebGL so `idle` may never fire), so poll for the ref with setTimeout (rAF is
+    // frozen in background tabs). Once the map instance exists it can accept a
+    // camera move; fitBounds only repositions the camera and doesn't need a
+    // fully-loaded style.
+    const check = () => {
+      if (mapRef.current?.getMap?.()) setMapReady(true);
+      else timer = setTimeout(check, 80);
+    };
+    check();
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!mapReady || fitPins.length === 0) return;
+    const lngs = fitPins.map((p) => p.lng!);
+    const lats = fitPins.map((p) => p.lat!);
+    mapRef.current?.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: 64, maxZoom: 14, duration: 600 },
+    );
+    // fitPins is derived deterministically from focusPins, captured via focusKey;
+    // re-fitting only when the focus set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapReady, focusKey]);
 
   const handleVote = useCallback(
     async (place: Place, vote: "up" | "down" | null) => {
@@ -64,6 +155,7 @@ export default function Map({ places, highlightedPlaceId }: Props) {
 
   return (
     <MapGL
+      ref={mapRef}
       mapboxAccessToken={TOKEN}
       initialViewState={{
         ...bounds,
@@ -74,7 +166,7 @@ export default function Map({ places, highlightedPlaceId }: Props) {
     >
       {mappable.map((place) => {
         const color = place.category ? PIN_COLORS[place.category as Category] : "#6b7280";
-        const isHighlighted = place.id === highlightedPlaceId;
+        const isHighlighted = highlightedSet.has(place.id);
         return (
           <Marker
             key={place.id}
