@@ -42,9 +42,59 @@ _KR_CITY = {
 }
 
 
+# In 2026 Kakao merged Gwangju metro and South Jeolla province into a single
+# region_1depth ("전남광주통합특별시"); the metro/province distinction now lives at
+# region_2depth. A region_2depth in Gwangju's five autonomous districts (구) means
+# Gwangju, anything else (목포시, 여수시, 무안군 …) is South Jeolla. Without this,
+# every Gwangju/South Jeolla coord and address resolves to None.
+_MERGED_JEONNAM_GWANGJU = "전남광주통합특별시"
+_GWANGJU_DISTRICTS = frozenset({"동구", "서구", "남구", "북구", "광산구"})
+
+
+def _region_from_parts(region_1: str | None, region_2: str | None) -> str | None:
+    """Map a Kakao region_1depth name (plus region_2depth for the merged
+    Jeonnam-Gwangju region) to an English city/province name."""
+    if region_1 == _MERGED_JEONNAM_GWANGJU:
+        return "Gwangju" if (region_2 or "") in _GWANGJU_DISTRICTS else "South Jeolla"
+    return _KR_CITY.get(region_1 or "")
+
+
 # English names Kakao maps addresses to — used to distinguish a genuine
 # metro/province conflict from a sub-province city Claude named (e.g. "Suwon").
 _KNOWN_KR_REGIONS = frozenset(v.lower() for v in _KR_CITY.values())
+
+
+# Free-form city labels Claude emits that denote a canonical Kakao region. Normalizing
+# these before the region-conflict check lets "Jeju Island" (which isn't itself a known
+# region name) be recognized as "Jeju", so wrong-region coordinates are discarded
+# instead of slipping past the check. Keyed lowercase.
+_EXPECTED_CITY_ALIASES = {
+    "jeju island": "Jeju",
+    "jeju-do": "Jeju",
+    "jeju do": "Jeju",
+    "jejudo": "Jeju",
+    "jeju city": "Jeju",
+    "seoul city": "Seoul",
+    "busan city": "Busan",
+}
+
+
+def _normalize_expected_city(expected_city: str | None) -> str | None:
+    """Map a free-form Claude city label onto a canonical Kakao region name when it
+    clearly denotes one, so `_kakao_region_conflict` can compare like with like.
+
+    Strips a trailing country qualifier ("Jeju Island, South Korea") and applies a
+    small alias map. Non-aliased sub-province cities (Suwon, Jeonju, …) pass through
+    unchanged so their legitimate results are still kept.
+    """
+    if not expected_city:
+        return expected_city
+    s = expected_city.strip()
+    for suffix in (", south korea", ", korea"):
+        if s.lower().endswith(suffix):
+            s = s[: -len(suffix)].strip()
+            break
+    return _EXPECTED_CITY_ALIASES.get(s.lower(), s)
 
 
 def _city_from_address(address: str) -> str | None:
@@ -54,7 +104,7 @@ def _city_from_address(address: str) -> str | None:
     parts = address.split()
     if not parts:
         return None
-    return _KR_CITY.get(parts[0])
+    return _region_from_parts(parts[0], parts[1] if len(parts) > 1 else None)
 
 
 def _kakao_region_conflict(expected_city: str | None, result_city: str | None) -> bool:
@@ -169,6 +219,7 @@ def geocode_full(
     strictly for genuine Korean metro/province conflicts, leniently elsewhere.
     """
     if country == "South Korea":
+        expected_city = _normalize_expected_city(expected_city)
         result = _kakao_full(location_name, expected_city=expected_city)
         if result.lat is not None:
             if _kakao_region_conflict(expected_city, result.city):
@@ -203,8 +254,9 @@ def city_from_coords(lat: float, lng: float) -> str | None:
         resp.raise_for_status()
         docs = resp.json().get("documents", [])
         for doc in docs:
-            region_1 = doc.get("region_1depth_name", "")
-            city = _KR_CITY.get(region_1)
+            city = _region_from_parts(
+                doc.get("region_1depth_name"), doc.get("region_2depth_name")
+            )
             if city:
                 return city
     except Exception:

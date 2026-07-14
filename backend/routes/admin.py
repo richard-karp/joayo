@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from database import get_db
 from models import Place, Vote
 from services import noise_filter
+from services.geocoder import city_from_coords
 from services.text_utils import _transcript_matches_caption, normalize_name
 
 router = APIRouter(prefix="/api/admin")
@@ -375,6 +376,145 @@ def merge_duplicates(request: Request, db: Session = Depends(get_db), _: None = 
         "checked": checked,
         "merged": len(pairs),
         "merged_pairs": pairs,
+    }
+
+
+# --- City/coordinate reconciliation ---
+# A place farther than this from its own city label's median centroid is treated as
+# misplaced (its label and coordinates disagree). Also the cap for relabeling to a
+# neighbouring city label — we only move a pin into a cluster it actually sits within.
+_RECONCILE_OUTLIER_M = 60_000
+
+
+def _median(values: list[float]) -> float:
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 0:
+        return (s[mid - 1] + s[mid]) / 2
+    return s[mid]
+
+
+def _city_centroids(places: list[Place]) -> dict[str, tuple[float, float]]:
+    """Median (lat, lng) per city label — outlier-robust vs. a mean centroid."""
+    groups: dict[str, list[tuple[float, float]]] = {}
+    for p in places:
+        groups.setdefault(p.city, []).append((p.lat, p.lng))
+    return {
+        city: (_median([c[0] for c in coords]), _median([c[1] for c in coords]))
+        for city, coords in groups.items()
+    }
+
+
+@router.post("/reconcile-cities")
+def reconcile_cities(
+    request: Request,
+    dry_run: bool = True,
+    db: Session = Depends(get_db),
+    _: None = Depends(_require_admin),
+):
+    """Relabel Korean places whose `city` disagrees with their coordinates — coords win.
+
+    The `city` label (from the LLM extraction) and lat/lng (from geocoding) are
+    populated independently, so a bad-POI geocode can leave a pin labeled "Seoul"
+    plotting 300 km away. That breaks the dashboard's city filter (list filters by
+    `city`, map plots by lat/lng).
+
+    Detects misplaced rows by geometry — a place >60 km from its own label's median
+    centroid — and reverse-geocodes ONLY those few (via Kakao `city_from_coords`) to
+    their authoritative top-level region. Each outlier is relabeled to the existing
+    city label whose median centroid is nearest AND whose own region matches that
+    authoritative region, within a 60 km cap; this preserves sub-province granularity
+    (a Gyeonggi pin moves to the nearest Gyeonggi label like "Suwon", not the bare
+    province). Outliers with no qualifying label are left unchanged and surfaced in
+    `needs_review`.
+
+    `?dry_run=true` (default) reports without writing; `dry_run=false` commits.
+    """
+    places = [
+        p
+        for p in db.query(Place)
+        .filter(
+            Place.country == "South Korea",
+            Place.lat.isnot(None),
+            Place.lng.isnot(None),
+            Place.city.isnot(None),
+        )
+        .all()
+        if (p.city or "").strip()
+    ]
+
+    centroids = _city_centroids(places)  # city label -> (median lat, median lng)
+
+    # Reverse-geocode each candidate centroid at most once across the whole run.
+    _centroid_region: dict[str, str | None] = {}
+
+    def centroid_region(city: str) -> str | None:
+        if city not in _centroid_region:
+            lat, lng = centroids[city]
+            _centroid_region[city] = city_from_coords(lat, lng)
+        return _centroid_region[city]
+
+    changes: list[dict] = []
+    needs_review: list[dict] = []
+    mismatched = 0
+
+    for p in places:
+        clat, clng = centroids[p.city]
+        if _haversine_m(p.lat, p.lng, clat, clng) <= _RECONCILE_OUTLIER_M:
+            continue  # sits within its own city's cluster — label and coords agree
+        mismatched += 1
+
+        authoritative = city_from_coords(p.lat, p.lng)
+        if not authoritative:
+            needs_review.append({
+                "id": p.id, "name": p.location_name, "old_city": p.city,
+                "lat": p.lat, "lng": p.lng, "reason": "no region from coords",
+            })
+            continue
+
+        # Nearest existing city label whose centroid region matches the pin's region,
+        # within the cap. Sorted nearest-first; the cap prunes the search.
+        new_city: str | None = None
+        candidates = sorted(
+            (
+                (c, _haversine_m(p.lat, p.lng, *centroids[c]))
+                for c in centroids
+                if c != p.city
+            ),
+            key=lambda cd: cd[1],
+        )
+        for cand_city, dist in candidates:
+            if dist > _RECONCILE_OUTLIER_M:
+                break
+            if centroid_region(cand_city) == authoritative:
+                new_city = cand_city
+                break
+
+        if not new_city:
+            needs_review.append({
+                "id": p.id, "name": p.location_name, "old_city": p.city,
+                "lat": p.lat, "lng": p.lng, "region": authoritative,
+                "reason": "no matching city label within range",
+            })
+            continue
+
+        changes.append({
+            "id": p.id, "name": p.location_name, "old_city": p.city,
+            "new_city": new_city, "lat": p.lat, "lng": p.lng,
+        })
+        if not dry_run:
+            p.city = new_city
+
+    if changes and not dry_run:
+        db.commit()
+
+    return {
+        "checked": len(places),
+        "mismatched": mismatched,
+        "changes": changes,
+        "needs_review": needs_review,
+        "dry_run": dry_run,
     }
 
 
