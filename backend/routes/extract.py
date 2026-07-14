@@ -330,8 +330,19 @@ def process_job(job_id: str, posts: list[dict]):
                         lat, lng = geo.lat, geo.lng
                         place_geocoder = geo.provider
                         place_geocoder_id = geo.place_id
-                        if extracted_place.city is None and geo.city:
-                            extracted_place.city = geo.city
+                        # Reconcile the label to the coordinates so the map (plots by
+                        # lat/lng) and list (filters by city) can't disagree: fill a
+                        # blank city, and when the matched POI's region genuinely
+                        # conflicts with Claude's labeled region, let the coordinates
+                        # win. Sub-province labels that don't conflict (Suwon…) stay.
+                        if geo.city:
+                            if extracted_place.city is None:
+                                extracted_place.city = geo.city
+                            elif geocoder._kakao_region_conflict(
+                                geocoder._normalize_expected_city(extracted_place.city),
+                                geo.city,
+                            ):
+                                extracted_place.city = geo.city
                     else:
                         lat, lng = None, None
 
