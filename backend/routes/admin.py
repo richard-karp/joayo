@@ -153,6 +153,14 @@ def _places_match(
             return False
         return True
 
+    # Fuzzy name matching is for places only. For a non-place item (dish/product) the
+    # name IS its identity — "Abalone Hot Pot Rice" and "Eel Hot Pot Rice" at the same
+    # venue are different menu items — so dishes match on exact name only. Mirrors the
+    # live deduplicator's non-place branch (services.deduplicator._find_match), which also
+    # requires an exact name; without this the retroactive pass over-merges menu items.
+    if not a.is_place:
+        return False
+
     tsr = _fuzz.token_set_ratio(a_name, b_name)
     ratio = _fuzz.ratio(a_name, b_name)
     if tsr >= _FUZZY_TOKEN_SET_THRESHOLD and ratio >= _FUZZY_RATIO_THRESHOLD and not cat_conflict:
@@ -315,7 +323,7 @@ def backfill_normalized_names(request: Request, db: Session = Depends(get_db), _
     return {"updated": updated}
 
 
-def _dedupe_places(db: Session) -> list[dict]:
+def _dedupe_places(db: Session, commit: bool = True) -> list[dict]:
     """Retroactive dedup pass: merge each newer place into an older match and delete
     the newer duplicate. Returns the kept/merged pairs. Shared by the merge endpoint
     and the import endpoint.
@@ -323,6 +331,9 @@ def _dedupe_places(db: Session) -> list[dict]:
     Records with no source_urls are skipped as both merge source and target — they are
     manual restorations (source_urls emptied) or empty artifacts that carry no mentions
     and must not be re-merged over a human correction.
+
+    Pass commit=False to leave the merges pending in the session (the caller commits or
+    rolls back) — used by the reconcile script to preview merges under its dry-run.
     """
     places = db.query(Place).order_by(Place.created_at).all()
     # Snapshot coords before any _absorb calls mutate them, preventing coord-chaining
@@ -357,7 +368,7 @@ def _dedupe_places(db: Session) -> list[dict]:
                 })
                 break
 
-    if pairs:
+    if pairs and commit:
         db.commit()
     return pairs
 

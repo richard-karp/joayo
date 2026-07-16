@@ -272,3 +272,37 @@ def test_duplicate_place_across_calls(mock_fetch, mock_extract, mock_geocode, mo
     assert db.query(Place).count() == 1
     place = db.query(Place).first()
     assert len(place.all_authors) == 2
+
+
+@patch("routes.extract.SessionLocal")
+@patch("routes.extract.geocoder.geocode_full",
+       return_value=GeoResult(lat=33.45, lng=126.57, city="Jeju", provider="kakao"))
+@patch("routes.extract.extractor.extract")
+@patch("routes.extract.fetch_post")
+def test_freeform_city_label_is_canonicalized_on_store(
+    mock_fetch, mock_extract, mock_geocode, mock_session_cls, db
+):
+    """A place Claude labels "Jeju Island" is stored as "Jeju", so it can never create
+    a duplicate city alongside pins already labeled "Jeju"."""
+    mock_session_cls.return_value = db
+    mock_fetch.return_value = make_raw_post(url="https://www.instagram.com/p/JEJU/")
+    mock_extract.return_value = [
+        ExtractedPlace(
+            location_name="Gamttanam Cafe",
+            category="eat",
+            subcategory="cafe",
+            is_place=True,
+            country="South Korea",
+            city="Jeju Island",  # freeform variant of the canonical "Jeju"
+            summary="Seaside cafe.",
+            labels=[],
+            insider_tips="",
+        )
+    ]
+
+    urls = ["https://www.instagram.com/p/JEJU/"]
+    job_id = _make_job(db, urls)
+    process_job(job_id, _posts(urls))
+
+    place = db.query(Place).one()
+    assert place.city == "Jeju"

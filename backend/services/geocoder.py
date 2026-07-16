@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -64,11 +65,12 @@ def _region_from_parts(region_1: str | None, region_2: str | None) -> str | None
 _KNOWN_KR_REGIONS = frozenset(v.lower() for v in _KR_CITY.values())
 
 
-# Free-form city labels Claude emits that denote a canonical Kakao region. Normalizing
-# these before the region-conflict check lets "Jeju Island" (which isn't itself a known
-# region name) be recognized as "Jeju", so wrong-region coordinates are discarded
-# instead of slipping past the check. Keyed lowercase.
-_EXPECTED_CITY_ALIASES = {
+# Free-form city labels Claude emits that denote a canonical Kakao region. Applied
+# both when storing a place's `city` (so variants collapse onto one label instead of
+# creating duplicate cities like "Jeju" + "Jeju Island") and before the region-conflict
+# check (so "Jeju Island", not itself a known region name, is recognized as "Jeju" and
+# wrong-region coordinates are discarded instead of slipping past). Keyed lowercase.
+_CITY_ALIASES = {
     "jeju island": "Jeju",
     "jeju-do": "Jeju",
     "jeju do": "Jeju",
@@ -78,23 +80,40 @@ _EXPECTED_CITY_ALIASES = {
     "busan city": "Busan",
 }
 
+# Hyphenated Korean administrative suffixes at the city (시) and county (군) levels,
+# which Claude sometimes appends ("Yangpyeong-gun", "Sacheon-si"). The romanized base
+# is the canonical English city name for these levels, so stripping the suffix is safe
+# and collapses the variant onto its bare label. Province (도) suffixes are NOT stripped
+# mechanically — their canonical English names differ from the romanization ("Jeollabuk"
+# ≠ "North Jeolla"), so those go through the curated alias map instead.
+_ADMIN_SUFFIX_RE = re.compile(r"-(?:si|gun)$", re.IGNORECASE)
 
-def _normalize_expected_city(expected_city: str | None) -> str | None:
-    """Map a free-form Claude city label onto a canonical Kakao region name when it
-    clearly denotes one, so `_kakao_region_conflict` can compare like with like.
 
-    Strips a trailing country qualifier ("Jeju Island, South Korea") and applies a
-    small alias map. Non-aliased sub-province cities (Suwon, Jeonju, …) pass through
-    unchanged so their legitimate results are still kept.
+def canonicalize_city(city: str | None) -> str | None:
+    """Return the canonical stored form of a free-form Claude city label.
+
+    Strips a trailing country qualifier ("Jeju Island, South Korea"), applies a curated
+    alias map, and drops hyphenated city/county administrative suffixes. Idempotent, so
+    it's safe to run at extraction time and re-run over existing rows. Non-aliased
+    sub-province cities (Suwon, Jeonju, …) pass through unchanged so their legitimate
+    results are still kept.
     """
-    if not expected_city:
-        return expected_city
-    s = expected_city.strip()
+    if not city:
+        return city
+    s = city.strip()
     for suffix in (", south korea", ", korea"):
         if s.lower().endswith(suffix):
             s = s[: -len(suffix)].strip()
             break
-    return _EXPECTED_CITY_ALIASES.get(s.lower(), s)
+    if s.lower() in _CITY_ALIASES:
+        return _CITY_ALIASES[s.lower()]
+    s = _ADMIN_SUFFIX_RE.sub("", s).strip()
+    return _CITY_ALIASES.get(s.lower(), s)
+
+
+# The region-conflict check normalizes Claude's expected city with the exact same rules
+# used to canonicalize a stored label — they're the same operation.
+_normalize_expected_city = canonicalize_city
 
 
 def _city_from_address(address: str) -> str | None:
