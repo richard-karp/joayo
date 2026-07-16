@@ -1,7 +1,7 @@
 from services import geocoder
 from services.geocoder import (
     GeoResult, geocode_full, _kakao_region_conflict, _cities_compatible,
-    _normalize_expected_city, _region_from_parts, _city_from_address,
+    _normalize_expected_city, canonicalize_city, _region_from_parts, _city_from_address,
 )
 
 
@@ -69,6 +69,41 @@ def test_cities_compatible_missing():
 
 def test_cities_incompatible_different_cities():
     assert _cities_compatible("Paris", "Lyon") is False
+
+
+# ── city canonicalization (duplicate-city prevention) ─────────────────────────
+
+def test_canonicalize_city_alias_map():
+    # Freeform variants that denote the same region collapse onto one label, so a
+    # place never lands under both "Jeju" and "Jeju Island".
+    assert canonicalize_city("Jeju Island") == "Jeju"
+    assert canonicalize_city("Jeju-do") == "Jeju"
+    assert canonicalize_city("jejudo") == "Jeju"
+    assert canonicalize_city("Jeju City") == "Jeju"
+
+
+def test_canonicalize_city_strips_admin_suffix():
+    # Hyphenated city (시) / county (군) suffixes are dropped — the romanized base is
+    # the canonical English name, so "Yangpyeong-gun" merges into "Yangpyeong".
+    assert canonicalize_city("Yangpyeong-gun") == "Yangpyeong"
+    assert canonicalize_city("Sacheon-si") == "Sacheon"
+    assert canonicalize_city("Gochang-gun") == "Gochang"
+
+
+def test_canonicalize_city_strips_country_suffix():
+    assert canonicalize_city("Jeju Island, South Korea") == "Jeju"
+    assert canonicalize_city("Seoul, Korea") == "Seoul"
+
+
+def test_canonicalize_city_passthrough_and_idempotent():
+    # Non-aliased sub-province cities and already-canonical labels survive unchanged,
+    # and canonicalization is a fixed point (safe to re-run over existing rows).
+    assert canonicalize_city("Suwon") == "Suwon"
+    assert canonicalize_city("Seoul") == "Seoul"
+    assert canonicalize_city("Jeju") == "Jeju"
+    assert canonicalize_city(canonicalize_city("Jeju Island")) == "Jeju"
+    assert canonicalize_city(None) is None
+    assert canonicalize_city("") == ""
 
 
 # ── expected_city normalization (prevention) ──────────────────────────────────

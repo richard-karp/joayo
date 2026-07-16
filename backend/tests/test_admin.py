@@ -2,7 +2,9 @@ from uuid import uuid4
 
 from models import Place
 from routes import admin
-from routes.admin import _city_centroids, _median, reconcile_cities
+from routes.admin import (
+    _city_centroids, _dedupe_places, _median, _places_match, reconcile_cities,
+)
 
 
 # ── Pure helpers ──────────────────────────────────────────────────────────────
@@ -113,3 +115,68 @@ def test_reconcile_needs_review_when_no_matching_label(db_session, mocker):
     assert res["needs_review"][0]["id"] == orphan.id
     db_session.expire_all()
     assert db_session.get(Place, orphan.id).city == "Seoul"  # untouched
+
+
+# ── Retroactive dish dedup (_places_match / _dedupe_places) ────────────────────
+
+def _dish(name, venue, city="Jeju"):
+    return Place(
+        id=str(uuid4()),
+        location_name=name,
+        normalized_name=name.lower(),
+        category="eat",
+        is_place=False,
+        venue=venue,
+        city=city,
+        source_urls=["https://x/" + str(uuid4())],
+        platform="instagram",
+    )
+
+
+def test_places_match_dish_exact_name_same_venue_merges():
+    a = _dish("Abalone Porridge", venue="")
+    b = _dish("Abalone Porridge", venue="")
+    assert _places_match(a, b) is True
+
+
+def test_places_match_dish_fuzzy_name_same_venue_does_not_merge():
+    """Different menu items at one venue must stay distinct — for a dish the name IS the
+    identity, so fuzzy (non-exact) name matching does not apply (mirrors live dedup)."""
+    a = _dish("Abalone Hot Pot Rice", venue="Gowoo Seongsu")
+    b = _dish("Eel Hot Pot Rice", venue="Gowoo Seongsu")
+    assert _places_match(a, b) is False
+
+
+def test_places_match_dish_same_name_different_venue_does_not_merge():
+    a = _dish("Abalone Porridge", venue="Restaurant A")
+    b = _dish("Abalone Porridge", venue="Restaurant B")
+    assert _places_match(a, b) is False
+
+
+def test_dedupe_places_commit_false_previews_without_writing(db_session):
+    """commit=False leaves the merge pending so the caller (reconcile script dry-run)
+    can preview and roll back — nothing is persisted."""
+    db_session.add_all([_dish("Jeju Black Pork", venue=""),
+                        _dish("Jeju Black Pork", venue="")])
+    db_session.commit()
+
+    pairs = _dedupe_places(db_session, commit=False)
+    assert len(pairs) == 1
+
+    db_session.rollback()  # discard the preview, as the script does
+    assert db_session.query(Place).count() == 2  # both rows still present
+
+
+def test_dedupe_places_default_commits_exact_dish_merge(db_session):
+    db_session.add_all([_dish("Jeju Black Pork", venue=""),
+                        _dish("Jeju Black Pork", venue=""),
+                        _dish("Abalone Hot Pot Rice", venue="Gowoo Seongsu"),
+                        _dish("Eel Hot Pot Rice", venue="Gowoo Seongsu")])
+    db_session.commit()
+
+    pairs = _dedupe_places(db_session)  # commit=True by default
+    assert len(pairs) == 1  # the exact pair merges; the two different dishes do not
+
+    db_session.expire_all()
+    names = sorted(p.location_name for p in db_session.query(Place).all())
+    assert names == ["Abalone Hot Pot Rice", "Eel Hot Pot Rice", "Jeju Black Pork"]

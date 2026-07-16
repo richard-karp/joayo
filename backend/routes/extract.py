@@ -353,6 +353,11 @@ def process_job(job_id: str, posts: list[dict]):
                     else:
                         lat, lng = None, None
 
+                    # Canonicalize the stored label so freeform variants ("Jeju Island",
+                    # "Yangpyeong-gun") collapse onto one city and never spawn a duplicate.
+                    # Runs on every path (places and non-place venue cities alike).
+                    extracted_place.city = geocoder.canonicalize_city(extracted_place.city)
+
                     # Keep (not drop) incidental/passing mentions, but surface them for review
                     if extracted_place.mention_type == "incidental":
                         msg = (f"'{extracted_place.location_name}' flagged as an incidental "
