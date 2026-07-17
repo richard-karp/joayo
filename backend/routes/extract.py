@@ -123,7 +123,7 @@ def process_job(job_id: str, posts: list[dict]):
         cdn_url_hits: dict[str, int] = {}
         seen_cdn_urls: set[str] = set()
         warnings = list(job.warnings or [])
-        geocode_cache: dict[tuple[str, str | None, str | None], GeoResult] = {}
+        geocode_cache: dict[tuple[str, str | None, str | None, str | None], GeoResult] = {}
 
         # On resume after CDN collision, start with transcription already disabled
         transcription_disabled = any(w["code"] == "cdn_collision" for w in warnings)
@@ -317,7 +317,8 @@ def process_job(job_id: str, posts: list[dict]):
                     place_geocoder_id = None
                     if extracted_place.is_place:
                         cache_key = (extracted_place.location_name,
-                                     extracted_place.country, extracted_place.city)
+                                     extracted_place.country, extracted_place.city,
+                                     extracted_place.native_name)
                         if cache_key in geocode_cache:
                             geo = geocode_cache[cache_key]
                         else:
@@ -325,6 +326,7 @@ def process_job(job_id: str, posts: list[dict]):
                                 extracted_place.location_name,
                                 country=extracted_place.country,
                                 expected_city=extracted_place.city,
+                                native_name=extracted_place.native_name,
                             )
                             geocode_cache[cache_key] = geo
                         lat, lng = geo.lat, geo.lng

@@ -24,18 +24,24 @@ export interface Place {
   venue: string | null;
   country: string | null;
   city: string | null;
+  neighborhood: string | null;
   summary: string | null;
   labels: string[] | null;
   insider_tips: string | null;
   lat: number | null;
   lng: number | null;
+  geocoder_place_id: string | null;
   raw_caption: string | null;
   tagged_accounts: string[] | null;
   transcript_missing: boolean;
   created_at: string;
-  vote_score: number;
-  current_vote: "up" | "down" | null;
+  needs_review: boolean;
+  my_rating: Rating | null;
+  want_to_go: boolean;
 }
+
+// Netflix-style 3-thumb rating: 👎 bad / 👍 good / 👍👍 very good. Rating marks visited.
+export type Rating = "down" | "up" | "double";
 
 export interface Job {
   id: string;
@@ -56,7 +62,6 @@ export interface LeaderboardEntry {
   username: string;
   platform_id: string | null;
   profile_url: string | null;
-  total_score: number;
   attributed_count: number;
   mentioned_count: number;
 }

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from database import get_db
-from models import Place, Vote
+from models import Place, PlaceMark
 from services import noise_filter
 from services.geocoder import city_from_coords
 from services.text_utils import _transcript_matches_caption, normalize_name
@@ -177,7 +177,7 @@ def _places_match(
 
 
 def _absorb(target: Place, source: Place, db: Session) -> None:
-    """Merge source's data into target, then delete source (including vote reassignment)."""
+    """Merge source's data into target, then delete source (including mark reassignment)."""
     # Merge source_urls
     urls = list(target.source_urls or [])
     for url in (source.source_urls or []):
@@ -224,16 +224,18 @@ def _absorb(target: Place, source: Place, db: Session) -> None:
         target.transcript = source.transcript
         target.transcript_missing = source.transcript_missing
 
-    # Reassign votes; drop source votes that conflict with an existing target vote
-    target_voters = {
-        v.voter for v in db.query(Vote).filter(Vote.place_id == target.id).all()
+    # Reassign marks (rating + wishlist); drop source marks that would collide with
+    # an existing target mark for the same user. Preserves visited/wishlist state
+    # across a merge — including a push-to-prod import that dedups into a prod place.
+    target_users = {
+        m.user for m in db.query(PlaceMark).filter(PlaceMark.place_id == target.id).all()
     }
-    if target_voters:
-        db.query(Vote).filter(
-            Vote.place_id == source.id,
-            Vote.voter.in_(target_voters),
+    if target_users:
+        db.query(PlaceMark).filter(
+            PlaceMark.place_id == source.id,
+            PlaceMark.user.in_(target_users),
         ).delete(synchronize_session=False)
-    db.query(Vote).filter(Vote.place_id == source.id).update(
+    db.query(PlaceMark).filter(PlaceMark.place_id == source.id).update(
         {"place_id": target.id}, synchronize_session=False
     )
 
@@ -283,13 +285,13 @@ def scrub_generic_names(request: Request, db: Session = Depends(get_db), _: None
 
     Targets names like "Insadong Korean BBQ restaurant", "Korean BBQ restaurant (Insadong)",
     "Hongdae cafe", etc. — area + category combinations that Claude should have skipped
-    but extracted anyway. Votes for deleted places are also removed.
+    but extracted anyway. Marks for deleted places are also removed.
     """
     candidates = db.query(Place).all()
     deleted = []
     for place in candidates:
         if _is_generic_name(place.location_name or ""):
-            db.query(Vote).filter(Vote.place_id == place.id).delete(synchronize_session=False)
+            db.query(PlaceMark).filter(PlaceMark.place_id == place.id).delete(synchronize_session=False)
             db.delete(place)
             deleted.append({"id": place.id, "name": place.location_name})
 
@@ -538,7 +540,7 @@ def import_places(
 ):
     """Additively merge places from an uploaded SQLite DB into this one.
 
-    Inserts only places whose id isn't already present (so existing rows, votes, and
+    Inserts only places whose id isn't already present (so existing rows, marks, and
     prod extractions are preserved — never an overwrite), then runs the dedup pass to
     collapse near-duplicates and recomputes ambient-noise flags over the combined set.
 

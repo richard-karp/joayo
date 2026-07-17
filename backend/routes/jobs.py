@@ -1,25 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Job, Place, Vote
+from models import Job, Place, PlaceMark
 from schemas import JobResponse, PlaceResponse
 
 router = APIRouter()
 
 
 def _place_to_response(place: Place, session: Session) -> PlaceResponse:
-    vote_score = session.query(func.sum(Vote.value)).filter(Vote.place_id == place.id).scalar() or 0
-    vote_row = session.query(Vote).filter(Vote.place_id == place.id, Vote.voter == "default").first()
-    current_vote = None
-    if vote_row:
-        current_vote = "up" if vote_row.value == 1 else "down"
-
+    mark = (
+        session.query(PlaceMark)
+        .filter(PlaceMark.place_id == place.id, PlaceMark.user == "default")
+        .first()
+    )
     return PlaceResponse(
         **{c.name: getattr(place, c.name) for c in place.__table__.columns},
-        vote_score=vote_score,
-        current_vote=current_vote,
+        my_rating=mark.rating if mark else None,
+        want_to_go=bool(mark.want_to_go) if mark else False,
     )
 
 

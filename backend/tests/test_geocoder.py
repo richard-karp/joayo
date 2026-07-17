@@ -182,3 +182,55 @@ def test_geocode_full_keeps_genuine_jeju_result_for_jeju_island(monkeypatch):
     result = geocode_full("Jeju Cafe", country="South Korea", expected_city="Jeju Island")
     assert result.lat == 33.49
     assert result.place_id == "JEJU-1"
+
+
+# ── native_name query preference (Kakao indexes Korean names) ─────────────────
+
+def _capture_kakao_query(monkeypatch):
+    """Patch _kakao_full to record the query it was called with."""
+    seen = {}
+
+    def _fake(name, expected_city=None):
+        seen["query"] = name
+        return GeoResult(lat=37.5, lng=127.0, city="Seoul",
+                         provider="kakao", place_id="X", canonical_name=name)
+
+    monkeypatch.setattr(geocoder, "_kakao_full", _fake)
+    return seen
+
+
+def test_geocode_full_prefers_native_name_for_korea(monkeypatch):
+    # Kakao indexes Korean names; the romanized location_name usually matches nothing.
+    seen = _capture_kakao_query(monkeypatch)
+    geocode_full("3dae Samgyejangin", country="South Korea",
+                 expected_city="Seoul", native_name="삼계장인")
+    assert seen["query"] == "삼계장인"
+
+
+def test_geocode_full_falls_back_to_location_name_without_native(monkeypatch):
+    seen = _capture_kakao_query(monkeypatch)
+    geocode_full("Gyeongbokgung Palace", country="South Korea", expected_city="Seoul")
+    assert seen["query"] == "Gyeongbokgung Palace"
+
+
+def test_geocode_full_ignores_blank_native_name(monkeypatch):
+    seen = _capture_kakao_query(monkeypatch)
+    geocode_full("Gyeongbokgung Palace", country="South Korea",
+                 expected_city="Seoul", native_name="   ")
+    assert seen["query"] == "Gyeongbokgung Palace"
+
+
+def test_geocode_full_native_name_only_for_korea(monkeypatch):
+    # Outside Korea we don't hit Kakao at all — native_name must not change routing.
+    called = {"kakao": False}
+    monkeypatch.setattr(
+        geocoder, "_kakao_full",
+        lambda name, expected_city=None: called.__setitem__("kakao", True) or GeoResult(),
+    )
+    monkeypatch.setattr(
+        geocoder, "_nominatim_geocode",
+        lambda name, country: GeoResult(lat=48.85, lng=2.35, city="Paris", provider="nominatim"),
+    )
+    result = geocode_full("Louvre", country="France", native_name="ルーブル")
+    assert called["kakao"] is False
+    assert result.provider == "nominatim"

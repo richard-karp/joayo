@@ -43,6 +43,7 @@ For each item, output:
 - country: the country where this item is located (e.g. "South Korea", "Japan", "United States") — infer from context; null if unclear
 - city: the city or region (e.g. "Seoul", "Busan", "Jeju Island") — infer from context; null if unclear
 - neighborhood: the sub-city locality or district if known (e.g. "Insadong", "Hongdae", "Seongsu") — null if unknown. Put the locality HERE; never fold it into location_name.
+- native_name: the place's name in its local script when you know it (Korean 한글 for South Korea, e.g. "경복궁" for Gyeongbokgung Palace, "카페 보라" for Café Bora) — null if the item is not a physical place or you don't know the local-script name. This is used to geocode the place; romanized-only names often fail to match, so provide the native name whenever you can.
 - mention_type: "primary" if this item is a genuine recommendation/subject of the post; "incidental" if it is only a passing or background mention (e.g. named in a comment aside, a place the creator merely walked past, a brand shown but not recommended).
 - insider_tips: practical advice
 

@@ -22,7 +22,7 @@ export default function Leaderboard({ activeAuthor, activeCategory, onAuthorClic
     getLeaderboard(activeCategory)
       .then((data) => {
         const sorted = [...data].sort(
-          (a, b) => b.total_score - a.total_score || b.attributed_count - a.attributed_count
+          (a, b) => b.attributed_count - a.attributed_count || b.mentioned_count - a.mentioned_count
         );
         setEntries(sorted);
         setShowAll(false);
@@ -56,8 +56,8 @@ export default function Leaderboard({ activeAuthor, activeCategory, onAuthorClic
           <tr className="border-b text-zinc-400 text-xs">
             <th className="text-left pb-2 font-medium">#</th>
             <th className="text-left pb-2 font-medium">Creator</th>
-            <th className="text-right pb-2 font-medium">Score</th>
             <th className="text-right pb-2 font-medium">Places</th>
+            <th className="text-right pb-2 font-medium">Mentions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
@@ -102,11 +102,11 @@ export default function Leaderboard({ activeAuthor, activeCategory, onAuthorClic
                   );
                 })()}
               </td>
-              <td className={`py-2 text-right tabular-nums font-medium ${entry.total_score > 0 ? "text-green-600" : entry.total_score < 0 ? "text-red-600" : "text-zinc-400"}`}>
-                {entry.total_score > 0 ? `+${entry.total_score}` : entry.total_score}
+              <td className="py-2 text-right text-zinc-900 tabular-nums font-medium">
+                {entry.attributed_count}
               </td>
               <td className="py-2 text-right text-zinc-500 tabular-nums">
-                {entry.attributed_count}
+                {entry.mentioned_count}
               </td>
             </tr>
           ))}

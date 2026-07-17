@@ -1,5 +1,7 @@
 'use client';
 
+import Link from "next/link";
+import MapLinks from "@/components/MapLinks";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import type { Category, Place } from "@/types";
@@ -54,6 +56,12 @@ export default function PlaceCard({ place, onClose, activeLabel, onLabelClick, c
         {place.insider_tips && (
           <p className="text-xs text-zinc-500 italic">{place.insider_tips}</p>
         )}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <MapLinks place={place} />
+          <Link href={`/places/${place.id}`} className="text-xs text-blue-600 hover:underline shrink-0">
+            View details ↗
+          </Link>
+        </div>
         {place.labels && place.labels.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {place.labels.map((label) => {

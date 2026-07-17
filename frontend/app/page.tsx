@@ -18,6 +18,7 @@ type View = "creators" | "places" | "categories";
 interface FilterData {
   countries: { name: string; place_count: number }[];
   cities: { name: string; country: string; place_count: number }[];
+  neighborhoods: { name: string; city: string; place_count: number }[];
   subcategories: { name: string; category: string; place_count: number }[];
 }
 
@@ -25,8 +26,11 @@ export default function DashboardPage() {
   const [filters, setFilters] = useState<FilterData | null>(null);
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
+  const [selectedNeighborhood, setSelectedNeighborhood] = useState<string | null>(null);
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const [markFilter, setMarkFilter] = useState<null | "rated" | "want_to_go">(null);
+  const [sortNew, setSortNew] = useState(false);
   const [search, setSearch] = useState("");
   const [places, setPlaces] = useState<Place[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +50,7 @@ export default function DashboardPage() {
   // (React's "adjust state on change" pattern) rather than in an effect, to avoid
   // a cascading post-render re-render.
   const filterKey = JSON.stringify([
-    selectedCountry, selectedCity, selectedSubcategory, selectedLabel, search,
+    selectedCountry, selectedCity, selectedNeighborhood, selectedSubcategory, selectedLabel, markFilter, search,
   ]);
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
@@ -72,9 +76,13 @@ export default function DashboardPage() {
       getPlaces({
         country: selectedCountry ?? undefined,
         city: selectedCity ?? undefined,
+        neighborhood: selectedNeighborhood ?? undefined,
         subcategory: selectedSubcategory ?? undefined,
         label: selectedLabel ?? undefined,
         q: search.trim() || undefined,
+        rated: markFilter === "rated" || undefined,
+        want_to_go: markFilter === "want_to_go" || undefined,
+        sort: sortNew ? "new" : undefined,
       }).then((data) => {
         // Ignore a stale response if a newer request has since been issued.
         if (reqId !== placesReqRef.current) return;
@@ -83,13 +91,16 @@ export default function DashboardPage() {
       });
     }, search ? 250 : 0);
     return () => clearTimeout(handle);
-  }, [selectedCountry, selectedCity, selectedSubcategory, selectedLabel, search, filters]);
+  }, [selectedCountry, selectedCity, selectedNeighborhood, selectedSubcategory, selectedLabel, markFilter, sortNew, search, filters]);
 
   const handleLabelClick = useCallback((label: string) => {
     setSelectedLabel((prev) => (prev === label ? null : label));
   }, []);
 
   const citiesForCountry = filters?.cities.filter((c) => c.country === selectedCountry) ?? [];
+  const neighborhoodsForCity = selectedCity
+    ? (filters?.neighborhoods.filter((n) => n.city === selectedCity) ?? [])
+    : [];
 
   const handleCreatorSelect = useCallback((username: string) => {
     setSelectedCreator((prev) => (prev === username ? null : username));
@@ -115,7 +126,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <header className="bg-white border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
+      <header className="sticky top-0 z-20 bg-white border-b border-zinc-200 px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="font-bold text-zinc-900 text-lg tracking-tight">joayo</h1>
           <p className="text-xs text-zinc-400">Locations extracted from social posts</p>
@@ -162,7 +173,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-zinc-400 mr-1">City</span>
             <button
-              onClick={() => setSelectedCity(null)}
+              onClick={() => { setSelectedCity(null); setSelectedNeighborhood(null); }}
               className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                 selectedCity === null
                   ? "bg-zinc-900 text-white border-zinc-900"
@@ -174,7 +185,10 @@ export default function DashboardPage() {
             {citiesForCountry.map((c) => (
               <button
                 key={c.name}
-                onClick={() => setSelectedCity((prev) => (prev === c.name ? null : c.name))}
+                onClick={() => {
+                  setSelectedNeighborhood(null);
+                  setSelectedCity((prev) => (prev === c.name ? null : c.name));
+                }}
                 className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                   selectedCity === c.name
                     ? "bg-zinc-900 text-white border-zinc-900"
@@ -183,6 +197,27 @@ export default function DashboardPage() {
               >
                 {c.name}
                 <span className="ml-1 opacity-60">{c.place_count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Neighborhood filter (nested under the selected city) */}
+        {selectedCity && neighborhoodsForCity.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap pl-4">
+            <span className="text-xs text-zinc-400 mr-1">Area</span>
+            {neighborhoodsForCity.map((n) => (
+              <button
+                key={n.name}
+                onClick={() => setSelectedNeighborhood((prev) => (prev === n.name ? null : n.name))}
+                className={`px-2.5 py-0.5 rounded-full text-xs border transition-colors ${
+                  selectedNeighborhood === n.name
+                    ? "bg-zinc-900 text-white border-zinc-900"
+                    : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-400"
+                }`}
+              >
+                {n.name}
+                <span className="ml-1 opacity-60">{n.place_count}</span>
               </button>
             ))}
           </div>
@@ -259,6 +294,33 @@ export default function DashboardPage() {
                   ))}
                 </select>
               )}
+              {([
+                { id: "want_to_go", label: "★ Want to go" },
+                { id: "rated", label: "Rated" },
+              ] as const).map((chip) => (
+                <button
+                  key={chip.id}
+                  onClick={() => setMarkFilter((prev) => (prev === chip.id ? null : chip.id))}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                    markFilter === chip.id
+                      ? "bg-zinc-900 text-white border-zinc-900"
+                      : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+              <button
+                onClick={() => setSortNew((v) => !v)}
+                title="Sort by most recent post"
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  sortNew
+                    ? "bg-zinc-900 text-white border-zinc-900"
+                    : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
+                }`}
+              >
+                Newest
+              </button>
               {selectedLabel && (
                 <button
                   onClick={() => setSelectedLabel(null)}
@@ -268,9 +330,9 @@ export default function DashboardPage() {
                   🏷 {selectedLabel} <span className="opacity-70">✕</span>
                 </button>
               )}
-              {(search || selectedSubcategory || selectedLabel) && (
+              {(search || selectedSubcategory || selectedLabel || markFilter) && (
                 <button
-                  onClick={() => { setSearch(""); setSelectedSubcategory(null); setSelectedLabel(null); }}
+                  onClick={() => { setSearch(""); setSelectedSubcategory(null); setSelectedLabel(null); setMarkFilter(null); }}
                   className="text-xs text-zinc-500 hover:text-zinc-900 border border-zinc-200 rounded-lg px-3 py-1.5 transition-colors"
                 >
                   Clear
@@ -298,8 +360,8 @@ export default function DashboardPage() {
                       onCreatorSelect={handleCreatorSelect}
                     />
                   </div>
-                  <div className="sticky top-6 space-y-0">
-                    <div className="h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
+                  <div className="order-first lg:order-none lg:sticky lg:top-6 space-y-0">
+                    <div className="h-72 lg:h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
                       <Map places={places} highlightedPlaceIds={[]} />
                     </div>
                     {selectedCreator && (
@@ -329,8 +391,8 @@ export default function DashboardPage() {
                     onLabelClick={handleLabelClick}
                   />
                 </div>
-                <div className="sticky top-6">
-                  <div className="h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
+                <div className="order-first lg:order-none lg:sticky lg:top-6">
+                  <div className="h-72 lg:h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
                     <Map places={places} highlightedPlaceIds={expandedPlaceIds} />
                   </div>
                 </div>
@@ -349,8 +411,8 @@ export default function DashboardPage() {
                     onLabelClick={handleLabelClick}
                   />
                 </div>
-                <div className="sticky top-6">
-                  <div className="h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
+                <div className="order-first lg:order-none lg:sticky lg:top-6">
+                  <div className="h-72 lg:h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
                     <Map places={places} highlightedPlaceIds={expandedPlaceIds} />
                   </div>
                 </div>

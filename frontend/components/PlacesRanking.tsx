@@ -14,11 +14,15 @@ interface Props {
   onLabelClick: (label: string) => void;
 }
 
+const RATING_RANK: Record<string, number> = { double: 2, up: 1, down: -1 };
+const RATING_EMOJI: Record<string, string> = { double: "👍👍", up: "👍", down: "👎" };
+const ratingRank = (p: Place) => (p.my_rating ? RATING_RANK[p.my_rating] : 0);
+
 export default function PlacesRanking({ places, expandedIds, onPlaceClick, activeLabel, onLabelClick }: Props) {
   const expanded = new Set(expandedIds);
   const ranked = [...places]
     .filter((p) => p.is_place)
-    .sort((a, b) => b.source_urls.length - a.source_urls.length || b.vote_score - a.vote_score);
+    .sort((a, b) => b.source_urls.length - a.source_urls.length || ratingRank(b) - ratingRank(a));
 
   if (ranked.length === 0) {
     return <p className="text-sm text-zinc-400">No places yet.</p>;
@@ -59,6 +63,15 @@ export default function PlacesRanking({ places, expandedIds, onPlaceClick, activ
                         ▸
                       </span>
                       <span className="truncate max-w-[180px]">{place.location_name}</span>
+                      {place.my_rating && (
+                        <span title="Your rating" className="shrink-0 text-xs">{RATING_EMOJI[place.my_rating]}</span>
+                      )}
+                      {place.want_to_go && (
+                        <span title="On your want-to-go list" className="shrink-0 text-amber-500 text-xs">★</span>
+                      )}
+                      {place.needs_review && (
+                        <span title="Location is a best guess — not yet verified" className="shrink-0 text-amber-600 text-xs">⚠</span>
+                      )}
                     </span>
                     {place.city && (
                       <span className="block pl-4 text-xs text-zinc-400 font-normal">{place.city}</span>
