@@ -24,6 +24,7 @@ class ExtractedPlace(BaseModel):
     country: Optional[str] = None   # e.g. "South Korea" — used to bias geocoding
     city: Optional[str] = None      # e.g. "Seoul"
     neighborhood: Optional[str] = None  # sub-city locality, e.g. "Insadong" — do NOT fold into the name
+    native_name: Optional[str] = None   # place's name in its local script (Korean 한글 for KR) — powers geocoding
     mention_type: Optional[Literal["primary", "incidental"]] = None  # "incidental" = passing/background mention
     summary: str
     labels: list[str]       # freeform descriptors only
@@ -89,18 +90,21 @@ class PlaceResponse(BaseModel):
     venue_place_id: Optional[str] = None
     country: Optional[str] = None
     city: Optional[str] = None
+    neighborhood: Optional[str] = None
     summary: Optional[str]
     labels: Optional[list[str]]
     insider_tips: Optional[str]
     lat: Optional[float]
     lng: Optional[float]
+    geocoder_place_id: Optional[str] = None  # Kakao POI id — powers "Open in Kakao Map" links
     raw_caption: Optional[str]
     tagged_accounts: Optional[list[str]]
     transcript_missing: bool
     created_at: datetime
-    # Computed from Vote table
-    vote_score: int = 0
-    current_vote: Optional[Literal["up", "down"]] = None
+    needs_review: bool = False  # coords are a low-confidence backfill "best guess" — show ⚠
+    # Computed from the PlaceMark table (the caller's rating + wishlist state)
+    my_rating: Optional[Literal["down", "up", "double"]] = None
+    want_to_go: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -130,10 +134,14 @@ class ExtractResponse(BaseModel):
     job_id: str
 
 
-# ── Vote request ─────────────────────────────────────────────────────────────
+# ── Rating / wishlist requests ───────────────────────────────────────────────
 
-class VoteRequest(BaseModel):
-    vote: Optional[Literal["up", "down"]] = None
+class RatingRequest(BaseModel):
+    rating: Optional[Literal["down", "up", "double"]] = None  # null clears the rating
+
+
+class WantToGoRequest(BaseModel):
+    want_to_go: bool
 
 
 # ── Leaderboard ──────────────────────────────────────────────────────────────
@@ -142,6 +150,5 @@ class LeaderboardEntry(BaseModel):
     username: str
     platform_id: Optional[str]
     profile_url: Optional[str] = None
-    total_score: int
-    attributed_count: int
+    attributed_count: int   # places this creator is the primary author of (the ranking)
     mentioned_count: int

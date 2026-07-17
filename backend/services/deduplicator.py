@@ -249,6 +249,8 @@ def find_or_merge_place(
             existing.city = extracted.city
         if existing.neighborhood is None and extracted.neighborhood is not None:
             existing.neighborhood = extracted.neighborhood
+        if existing.native_name is None and extracted.native_name is not None:
+            existing.native_name = extracted.native_name
         if existing.geocoder is None and geocoder is not None:
             existing.geocoder = geocoder
         if existing.geocoder_place_id is None and geocoder_place_id is not None:
@@ -279,6 +281,7 @@ def find_or_merge_place(
         country=extracted.country,
         city=extracted.city,
         neighborhood=extracted.neighborhood,
+        native_name=extracted.native_name,
         summary=extracted.summary,
         labels=canonicalize_labels(extracted.labels),
         insider_tips=extracted.insider_tips,

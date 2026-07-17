@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { voteOnPlace } from "@/lib/api";
+import RatingControl from "@/components/RatingControl";
 import type { Category, Place } from "@/types";
 import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
 
@@ -12,52 +12,6 @@ interface Props {
   activeCategory: Category | null;
   authorFilter: string | null;
   onPlaceHover?: (placeId: string | null) => void;
-}
-
-function VoteButtons({ place, onUpdate }: { place: Place; onUpdate: (p: Place) => void }) {
-  const [loading, setLoading] = useState(false);
-
-  async function vote(v: "up" | "down" | null) {
-    if (loading) return;
-    const next = place.current_vote === v ? null : v;
-    setLoading(true);
-    try {
-      const updated = await voteOnPlace(place.id, next);
-      onUpdate(updated);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-1 text-sm">
-      <button
-        onClick={() => vote("up")}
-        disabled={loading}
-        className={`px-2 py-0.5 rounded transition-colors ${
-          place.current_vote === "up"
-            ? "bg-green-100 text-green-700"
-            : "text-zinc-400 hover:text-green-600 hover:bg-green-50"
-        }`}
-      >
-        👍
-      </button>
-      <span className={`font-medium tabular-nums ${place.vote_score > 0 ? "text-green-600" : place.vote_score < 0 ? "text-red-600" : "text-zinc-400"}`}>
-        {place.vote_score > 0 ? `+${place.vote_score}` : place.vote_score}
-      </span>
-      <button
-        onClick={() => vote("down")}
-        disabled={loading}
-        className={`px-2 py-0.5 rounded transition-colors ${
-          place.current_vote === "down"
-            ? "bg-red-100 text-red-700"
-            : "text-zinc-400 hover:text-red-600 hover:bg-red-50"
-        }`}
-      >
-        👎
-      </button>
-    </div>
-  );
 }
 
 function ItemCard({
@@ -118,7 +72,7 @@ function ItemCard({
               )}
             </div>
           </div>
-          <VoteButtons place={place} onUpdate={onUpdate} />
+          <RatingControl place={place} onUpdate={onUpdate} />
         </div>
 
         {place.summary && (
@@ -221,7 +175,7 @@ export default function PlaceList({ places, activeCategory, authorFilter, onPlac
     setLocalPlaces(places);
   }
 
-  function handleVoteUpdate(updated: Place) {
+  function handleMarkUpdate(updated: Place) {
     setLocalPlaces((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
   }
 
@@ -280,7 +234,7 @@ export default function PlaceList({ places, activeCategory, authorFilter, onPlac
               <ItemCard
                 key={place.id}
                 place={place}
-                onUpdate={handleVoteUpdate}
+                onUpdate={handleMarkUpdate}
                 onHover={onPlaceHover}
                 isSelected={selectedId === place.id}
                 associatedThings={associatedThings}
@@ -310,7 +264,7 @@ export default function PlaceList({ places, activeCategory, authorFilter, onPlac
               <ItemCard
                 key={thing.id}
                 place={thing}
-                onUpdate={handleVoteUpdate}
+                onUpdate={handleMarkUpdate}
                 isSelected={selectedId === thing.id}
                 associatedPlaces={associatedPlaces?.length ? associatedPlaces : undefined}
                 onSelectItem={selectItem}

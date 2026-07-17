@@ -1,4 +1,4 @@
-import type { Job, LeaderboardEntry, Place } from "@/types";
+import type { Job, LeaderboardEntry, Place, Rating } from "@/types";
 
 const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
@@ -30,14 +30,22 @@ export async function getJob(jobId: string): Promise<Job> {
   return request(`/api/jobs/${jobId}`);
 }
 
-export async function voteOnPlace(
-  placeId: string,
-  vote: "up" | "down" | null
-): Promise<Place> {
-  return request(`/api/places/${placeId}/vote`, {
+// Set (or clear, with null) the caller's rating. Rating a place marks it visited
+// and clears any "want to go" flag.
+export async function ratePlace(placeId: string, rating: Rating | null): Promise<Place> {
+  return request(`/api/places/${placeId}/rating`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ vote }),
+    body: JSON.stringify({ rating }),
+  });
+}
+
+// Toggle the "want to go" wishlist flag.
+export async function setWantToGo(placeId: string, wantToGo: boolean): Promise<Place> {
+  return request(`/api/places/${placeId}/want-to-go`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ want_to_go: wantToGo }),
   });
 }
 
@@ -47,21 +55,33 @@ export async function getLeaderboard(category?: string | null): Promise<Leaderbo
 }
 
 export async function getPlaces(
-  params?: { country?: string; city?: string; subcategory?: string; label?: string; q?: string }
+  params?: {
+    country?: string; city?: string; neighborhood?: string; subcategory?: string;
+    label?: string; q?: string; rated?: boolean; want_to_go?: boolean; sort?: "new";
+  }
 ): Promise<Place[]> {
   const qs = new URLSearchParams();
   if (params?.country) qs.set("country", params.country);
   if (params?.city) qs.set("city", params.city);
+  if (params?.neighborhood) qs.set("neighborhood", params.neighborhood);
   if (params?.subcategory) qs.set("subcategory", params.subcategory);
   if (params?.label) qs.set("label", params.label);
   if (params?.q) qs.set("q", params.q);
+  if (params?.rated) qs.set("rated", "true");
+  if (params?.want_to_go) qs.set("want_to_go", "true");
+  if (params?.sort) qs.set("sort", params.sort);
   const query = qs.toString() ? `?${qs}` : "";
   return request(`/api/places${query}`);
+}
+
+export async function getPlace(placeId: string): Promise<Place> {
+  return request(`/api/places/${placeId}`);
 }
 
 export async function getFilters(): Promise<{
   countries: { name: string; place_count: number }[];
   cities: { name: string; country: string; place_count: number }[];
+  neighborhoods: { name: string; city: string; place_count: number }[];
   subcategories: { name: string; category: string; place_count: number }[];
 }> {
   return request("/api/filters");

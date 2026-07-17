@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 import main
 from database import Base, get_db
-from models import Job, Place, Vote
+from models import Job, Place, PlaceMark
 
 
 @pytest.fixture()
@@ -170,8 +170,8 @@ def test_leaderboard_returns_sorted_list(client):
     data = resp.json()
     assert isinstance(data, list)
     assert data[0]["username"] == "test_user"
-    assert "total_score" in data[0]
     assert "attributed_count" in data[0]
+    assert "mentioned_count" in data[0]
 
 
 # ── /api/admin/backfill-normalized-names (#15) ───────────────────────────────
@@ -393,15 +393,15 @@ def test_merge_duplicates_merges_exact_normalized_name(client, monkeypatch):
 
 # ── /api/admin/import-places ─────────────────────────────────────────────────
 
-def test_import_places_is_additive_and_preserves_votes(client, monkeypatch, tmp_path):
+def test_import_places_is_additive_and_preserves_marks(client, monkeypatch, tmp_path):
     """Uploading a local DB adds only new places (by id); existing rows and their
-    votes are preserved (never an overwrite)."""
+    marks (rating / wishlist) are preserved (never an overwrite)."""
     c, session = client
     monkeypatch.setenv("ADMIN_TOKEN", "secret")
 
     job_id = _seed_job(session)
     existing_id = _add_place(session, job_id, "Existing Place", lat=37.50, lng=127.00)
-    session.add(Vote(id=str(uuid4()), place_id=existing_id, voter="default", value=1))
+    session.add(PlaceMark(id=str(uuid4()), place_id=existing_id, user="default", rating="up"))
     session.commit()
 
     # Build a source DB: the existing place (same id) + one genuinely new place.
@@ -430,7 +430,7 @@ def test_import_places_is_additive_and_preserves_votes(client, monkeypatch, tmp_
 
     session.expire_all()
     assert session.get(Place, existing_id) is not None                     # existing kept
-    assert session.query(Vote).filter(Vote.place_id == existing_id).count() == 1  # vote kept
+    assert session.query(PlaceMark).filter(PlaceMark.place_id == existing_id).count() == 1  # mark kept
     new_place = session.query(Place).filter(Place.location_name == "New Local Place").one()
     assert new_place.created_by_job_id is None   # local job FK dropped on import
 

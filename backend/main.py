@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from database import engine
 from models import Base
-from routes import extract, jobs, export, votes, leaderboard, places, admin
+from routes import extract, jobs, export, marks, leaderboard, places, admin
 
 Base.metadata.create_all(bind=engine)
 
@@ -23,7 +23,9 @@ with engine.connect() as _conn:
         "ALTER TABLE places ADD COLUMN geocoder_place_id TEXT",
         "ALTER TABLE places ADD COLUMN normalized_name TEXT",
         "ALTER TABLE places ADD COLUMN neighborhood TEXT",
+        "ALTER TABLE places ADD COLUMN native_name TEXT",
         "ALTER TABLE places ADD COLUMN is_context BOOLEAN DEFAULT 0",
+        "ALTER TABLE places ADD COLUMN needs_review BOOLEAN DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_places_geocoder_place_id ON places(geocoder_place_id)",
         "CREATE INDEX IF NOT EXISTS ix_places_normalized_name ON places(normalized_name)",
     ]:
@@ -56,7 +58,7 @@ app.add_middleware(
 app.include_router(extract.router)
 app.include_router(jobs.router)
 app.include_router(export.router)
-app.include_router(votes.router)
+app.include_router(marks.router)
 app.include_router(leaderboard.router)
 app.include_router(places.router)
 app.include_router(admin.router)

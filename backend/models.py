@@ -60,9 +60,11 @@ class Place(Base):
     # Matching helpers
     normalized_name = Column(String, nullable=True, index=True)   # normalized location_name for cheap matching
     neighborhood    = Column(String, nullable=True)               # sub-city locality
+    native_name     = Column(String, nullable=True)               # place name in local script (한글 for KR) — drives geocoding
 
     # Quality flags
-    is_context = Column(Boolean, default=False)  # True = ambient home-base (the collection's dominant country/city) or media — demoted, not shown as a "noteworthy" recommendation
+    is_context   = Column(Boolean, default=False)  # True = ambient home-base (the collection's dominant country/city) or media — demoted, not shown as a "noteworthy" recommendation
+    needs_review = Column(Boolean, default=False)  # True = coordinates recovered by the native-name backfill are a low-confidence "best guess" (surface a ⚠ badge)
 
     # Raw source (from primary_author's post)
     raw_caption        = Column(String)
@@ -87,13 +89,20 @@ class CdnUrlCache(Base):
     last_seen_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-class Vote(Base):
-    __tablename__ = "votes"
-    __table_args__ = (UniqueConstraint("place_id", "voter"),)
+class PlaceMark(Base):
+    """A user's Netflix-style rating and/or "want to go" wishlist flag for a place.
+
+    One row carries both signals. Rating a place marks it visited; setting a rating
+    clears want_to_go. The row is deleted only when both signals are empty
+    (rating IS NULL AND want_to_go = 0). Replaces the retired Vote model.
+    """
+    __tablename__ = "place_marks"
+    __table_args__ = (UniqueConstraint("place_id", "user"),)
 
     id         = Column(String, primary_key=True)
     place_id   = Column(String, ForeignKey("places.id"), index=True)
-    voter      = Column(String, default="default")         # "default" until multi-user auth added
-    value      = Column(Integer)                           # +1 or -1
+    user       = Column(String, default="default")         # "default" until multi-user auth added
+    rating     = Column(String, nullable=True)             # "down" | "up" | "double" (bad/good/very good)
+    want_to_go = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

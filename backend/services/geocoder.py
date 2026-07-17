@@ -19,6 +19,7 @@ class GeoResult:
     provider: str | None = None        # "kakao" | "nominatim"
     place_id: str | None = None        # stable external POI id
     canonical_name: str | None = None  # provider's canonical name for the POI
+    address: str | None = None         # provider's address string (for match verification)
 
 # Maps the first word of a Kakao address to an English city/province name.
 # Major metros are their own city; provinces fall back to province name.
@@ -177,6 +178,7 @@ def _kakao_full(location_name: str, expected_city: str | None = None) -> GeoResu
             provider="kakao",
             place_id=chosen.get("id"),
             canonical_name=chosen.get("place_name"),
+            address=chosen.get("address_name") or chosen.get("road_address_name"),
         )
     except Exception:
         pass
@@ -231,15 +233,21 @@ def geocode_full(
     location_name: str,
     country: str | None = None,
     expected_city: str | None = None,
+    native_name: str | None = None,
 ) -> GeoResult:
     """Geocode a place, returning a rich GeoResult (provider, place_id, city).
 
     Applies an expected_city cross-check to discard wrong-city chain-store hits —
     strictly for genuine Korean metro/province conflicts, leniently elsewhere.
+
+    For South Korea, Kakao keyword search indexes Korean names, so when a
+    `native_name` (한글) is available it is used as the query in preference to the
+    romanized `location_name`, which frequently matches nothing.
     """
     if country == "South Korea":
         expected_city = _normalize_expected_city(expected_city)
-        result = _kakao_full(location_name, expected_city=expected_city)
+        query = native_name.strip() if native_name and native_name.strip() else location_name
+        result = _kakao_full(query, expected_city=expected_city)
         if result.lat is not None:
             if _kakao_region_conflict(expected_city, result.city):
                 return GeoResult()
