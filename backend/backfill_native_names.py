@@ -39,8 +39,6 @@ load_dotenv(find_dotenv(raise_error_if_not_found=False))
 # production's absolute DB_PATH (the Fly volume) still takes precedence.
 os.environ.setdefault("DB_PATH", os.path.join(os.path.dirname(__file__), "places.db"))
 
-from rapidfuzz import fuzz  # noqa: E402
-
 from database import SessionLocal  # noqa: E402  (import after DB_PATH is resolved)
 from models import Place  # noqa: E402
 from routes.admin import _dedupe_places  # noqa: E402
@@ -50,7 +48,7 @@ from services import extractor, geocoder  # noqa: E402
 _MODEL = "claude-haiku-4-5"
 _MAX_TOKENS = 256
 _CAPTION_SNIPPET = 500            # chars of raw_caption fed to the model for context
-_CONF_THRESHOLD = 80             # token_set_ratio(native, kakao place_name) below this → flag
+_CONF_THRESHOLD = geocoder.REVIEW_CONF_THRESHOLD  # native/kakao match below this → flag
 _SLEEP_BETWEEN = 0.1             # gentle throttle for the Kakao/LLM APIs
 _COMMIT_EVERY = 25              # persist progress every N writes (mid-run crash-safety)
 
@@ -108,14 +106,14 @@ def _confidence(native_name, geo) -> tuple[int, bool]:
     """Return (fuzzy_score, needs_review).
 
     Confidence is how well the LLM's Korean name matches the name Kakao returned
-    (token_set_ratio); below the threshold, the pin is flagged for review.
+    (token_set_ratio); below the threshold, the pin is flagged for review. Delegates
+    to geocoder.review_confidence so this and the /review endpoint share one rule.
 
     (A neighborhood-in-address corroboration was considered but dropped: our stored
     neighborhoods are romanized — "Seocho" — while Kakao addresses are Korean —
     "서초구" — so a substring check never matches for the real KR data.)
     """
-    score = int(fuzz.token_set_ratio(native_name or "", geo.canonical_name or ""))
-    return score, score < _CONF_THRESHOLD
+    return geocoder.review_confidence(native_name, geo.canonical_name)
 
 
 def _backup_db() -> str:

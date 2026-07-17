@@ -97,6 +97,7 @@ class PlaceResponse(BaseModel):
     lat: Optional[float]
     lng: Optional[float]
     geocoder_place_id: Optional[str] = None  # Kakao POI id — powers "Open in Kakao Map" links
+    native_name: Optional[str] = None  # local-script (Korean 한글) name — prefill for review re-geocode
     raw_caption: Optional[str]
     tagged_accounts: Optional[list[str]]
     transcript_missing: bool
@@ -142,6 +143,15 @@ class RatingRequest(BaseModel):
 
 class WantToGoRequest(BaseModel):
     want_to_go: bool
+
+
+class ReviewRequest(BaseModel):
+    # Remediation for a needs_review pin:
+    #   confirm   — the pin is correct; clear the flag, keep coordinates.
+    #   regeocode — re-run Kakao with a corrected native_name; requires native_name.
+    #   reject    — the pin is wrong; null out coordinates (place stays unmapped).
+    action: Literal["confirm", "regeocode", "reject"]
+    native_name: Optional[str] = None  # the corrected Korean (한글) name, for regeocode
 
 
 # ── Leaderboard ──────────────────────────────────────────────────────────────

@@ -49,6 +49,34 @@ export async function setWantToGo(placeId: string, wantToGo: boolean): Promise<P
   });
 }
 
+export type ReviewAction = "confirm" | "regeocode" | "reject";
+
+// Remediate a low-confidence (needs_review) pin: confirm it, re-geocode with a
+// corrected Korean name, or reject it (drop the pin). Throws Error(detail) on a
+// 422 — e.g. "No Kakao match for '…'" — so the UI can show the reason inline.
+export async function reviewPlace(
+  placeId: string,
+  action: ReviewAction,
+  nativeName?: string,
+): Promise<Place> {
+  const res = await fetch(`${BASE}/api/places/${placeId}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, native_name: nativeName }),
+  });
+  if (!res.ok) {
+    let detail = `${res.status} ${res.statusText}`;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+    } catch {
+      /* non-JSON error body — keep the status line */
+    }
+    throw new Error(detail);
+  }
+  return res.json() as Promise<Place>;
+}
+
 export async function getLeaderboard(category?: string | null): Promise<LeaderboardEntry[]> {
   const qs = category ? `?category=${encodeURIComponent(category)}` : "";
   return request(`/api/leaderboard${qs}`);
@@ -57,7 +85,8 @@ export async function getLeaderboard(category?: string | null): Promise<Leaderbo
 export async function getPlaces(
   params?: {
     country?: string; city?: string; neighborhood?: string; subcategory?: string;
-    label?: string; q?: string; rated?: boolean; want_to_go?: boolean; sort?: "new";
+    label?: string; q?: string; rated?: boolean; want_to_go?: boolean;
+    needs_review?: boolean; sort?: "new";
   }
 ): Promise<Place[]> {
   const qs = new URLSearchParams();
@@ -69,6 +98,7 @@ export async function getPlaces(
   if (params?.q) qs.set("q", params.q);
   if (params?.rated) qs.set("rated", "true");
   if (params?.want_to_go) qs.set("want_to_go", "true");
+  if (params?.needs_review) qs.set("needs_review", "true");
   if (params?.sort) qs.set("sort", params.sort);
   const query = qs.toString() ? `?${qs}` : "";
   return request(`/api/places${query}`);
