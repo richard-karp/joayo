@@ -5,6 +5,7 @@ import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import MapLinks from "@/components/MapLinks";
 import RatingControl from "@/components/RatingControl";
+import ReviewPanel from "@/components/ReviewPanel";
 import { Badge } from "@/components/ui/badge";
 import { getPlace } from "@/lib/api";
 import type { Category, Place } from "@/types";
@@ -69,6 +70,8 @@ export default function PlaceDetailPage({ params }: { params: Promise<{ id: stri
               <RatingControl place={place} onUpdate={setPlace} />
               <MapLinks place={place} />
             </div>
+
+            <ReviewPanel place={place} onUpdate={setPlace} />
 
             {place.lat != null && place.lng != null && (
               <div className="h-72 rounded-xl overflow-hidden shadow-sm border border-zinc-200">

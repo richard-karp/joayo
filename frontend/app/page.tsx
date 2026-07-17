@@ -29,7 +29,7 @@ export default function DashboardPage() {
   const [selectedNeighborhood, setSelectedNeighborhood] = useState<string | null>(null);
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
-  const [markFilter, setMarkFilter] = useState<null | "rated" | "want_to_go">(null);
+  const [markFilter, setMarkFilter] = useState<null | "rated" | "want_to_go" | "needs_review">(null);
   const [sortNew, setSortNew] = useState(false);
   const [search, setSearch] = useState("");
   const [places, setPlaces] = useState<Place[]>([]);
@@ -82,6 +82,7 @@ export default function DashboardPage() {
         q: search.trim() || undefined,
         rated: markFilter === "rated" || undefined,
         want_to_go: markFilter === "want_to_go" || undefined,
+        needs_review: markFilter === "needs_review" || undefined,
         sort: sortNew ? "new" : undefined,
       }).then((data) => {
         // Ignore a stale response if a newer request has since been issued.
@@ -297,6 +298,7 @@ export default function DashboardPage() {
               {([
                 { id: "want_to_go", label: "★ Want to go" },
                 { id: "rated", label: "Rated" },
+                { id: "needs_review", label: "⚠ Needs review" },
               ] as const).map((chip) => (
                 <button
                   key={chip.id}

@@ -21,6 +21,22 @@ class GeoResult:
     canonical_name: str | None = None  # provider's canonical name for the POI
     address: str | None = None         # provider's address string (for match verification)
 
+
+# Below this token_set_ratio(native_name, provider canonical_name), a geocode is a
+# low-confidence "best guess" and gets flagged needs_review. Shared by the native-name
+# backfill and the review-remediation endpoint so the two never drift apart.
+REVIEW_CONF_THRESHOLD = 80
+
+
+def review_confidence(native_name: str | None, canonical_name: str | None) -> tuple[int, bool]:
+    """Return (fuzzy_score, needs_review): how well the queried native name matches
+    the name the provider returned. Below REVIEW_CONF_THRESHOLD → flag for review."""
+    from rapidfuzz import fuzz
+
+    score = int(fuzz.token_set_ratio(native_name or "", canonical_name or ""))
+    return score, score < REVIEW_CONF_THRESHOLD
+
+
 # Maps the first word of a Kakao address to an English city/province name.
 # Major metros are their own city; provinces fall back to province name.
 _KR_CITY = {

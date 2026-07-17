@@ -35,6 +35,7 @@ def _to_response(place: Place, mark: PlaceMark | None) -> PlaceResponse:
         lat=place.lat,
         lng=place.lng,
         geocoder_place_id=place.geocoder_place_id,
+        native_name=place.native_name,
         raw_caption=place.raw_caption,
         tagged_accounts=place.tagged_accounts,
         transcript_missing=place.transcript_missing or False,
@@ -56,12 +57,15 @@ def get_places(
     include_context: bool = Query(False, description="Include ambient home-base / media places (is_context=True)"),
     rated: bool = Query(False, description="Only places the user has rated (visited)"),
     want_to_go: bool = Query(False, description="Only places on the user's 'want to go' wishlist"),
+    needs_review: bool = Query(False, description="Only low-confidence 'best guess' pins awaiting review"),
     sort: str | None = Query(None, description="'new' = most recent post first; default = recently added"),
     db: Session = Depends(get_db),
 ):
     query = db.query(Place)
     if not include_context:
         query = query.filter(Place.is_context.isnot(True))
+    if needs_review:
+        query = query.filter(Place.needs_review.is_(True))
     if neighborhood:
         query = query.filter(Place.neighborhood == neighborhood)
     if rated:
