@@ -58,7 +58,7 @@ def _is_empty_of_signal(raw_post) -> bool:
 
 
 def _is_language_mismatch(detected_language: str | None, caption: str | None) -> bool:
-    """Return True if AssemblyAI detected English for a clearly non-Latin-script caption."""
+    """Return True if the transcriber detected English for a clearly non-Latin-script caption."""
     if not detected_language or not caption:
         return False
     if detected_language == "en":
@@ -222,8 +222,8 @@ def process_job(job_id: str, posts: list[dict]):
                         if consecutive_transcription_failures >= PAUSE_THRESHOLD_TRANSCRIPTION:
                             _pause_job(
                                 job, session, posts[i:],
-                                "assemblyai_rate_limit",
-                                f"AssemblyAI rate limit hit {consecutive_transcription_failures} times in a row "
+                                "transcription_rate_limit",
+                                f"Groq rate limit hit {consecutive_transcription_failures} times in a row "
                                 f"(Retry-After: {e.retry_after}s). Resume after the rate limit window clears.",
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
@@ -234,9 +234,9 @@ def process_job(job_id: str, posts: list[dict]):
                         if consecutive_transcription_failures >= PAUSE_THRESHOLD_TRANSCRIPTION:
                             _pause_job(
                                 job, session, posts[i:],
-                                "assemblyai_error",
+                                "transcription_error",
                                 f"{consecutive_transcription_failures} consecutive transcription failures. "
-                                f"AssemblyAI may be down or unavailable. Resume when the service recovers.",
+                                f"Groq may be down or unavailable. Resume when the service recovers.",
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
                             return

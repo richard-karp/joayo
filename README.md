@@ -40,7 +40,7 @@ All keys are documented in [`.env.example`](.env.example). Summary:
 | `ANTHROPIC_API_KEY` | yes | Claude extraction |
 | `APIFY_API_TOKEN` | yes (cloud) | Instagram/YouTube scraping — see note below |
 | `KAKAO_REST_API_KEY` | yes | Korean geocoding |
-| `ASSEMBLYAI_API_KEY` | optional | Reel audio → transcript (falls back to caption-only) |
+| `GROQ_API_KEY` | optional | Reel audio → transcript via Groq Whisper (falls back to caption-only) |
 | `EXTRACT_SECRET` | prod | Shared code gating `/api/extract` (set it in production) |
 | `ADMIN_TOKEN` | optional | Protects `/api/admin/*` |
 | `CORS_ORIGINS` | prod | Comma-separated allowed frontend origins |

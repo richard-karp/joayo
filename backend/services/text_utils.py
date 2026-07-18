@@ -49,7 +49,7 @@ def _transcript_matches_caption(transcript: str, caption: str) -> bool:
     """Return False if the transcript is clearly from a different video than the caption.
 
     Catches the case where Instagram CDN content-addressed storage returns the same
-    video file URL for many different posts — AssemblyAI then returns a cached
+    video file URL for many different posts — the transcriber then returns a cached
     transcript that belongs to a completely different video.
     """
     if not transcript or not caption:
