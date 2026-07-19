@@ -91,6 +91,7 @@ def _extract_audio(video_url: str, dest_dir: str) -> str:
         ["ffmpeg", "-y", "-i", video_path,
          "-vn", "-ac", "1", "-ar", "16000", "-b:a", "64k", audio_path],
         capture_output=True,
+        timeout=120,  # local file, but never let a pathological input hang the worker
     )
     if proc.returncode != 0 or not os.path.exists(audio_path):
         tail = proc.stderr.decode("utf-8", "replace")[-400:]
@@ -110,7 +111,7 @@ def transcribe(video_cdn_url: str, *, max_rate_limit_retries: int = 3) -> Transc
         try:
             audio_path = _extract_audio(video_cdn_url, tmp)
         except Exception as e:
-            logger.warning("audio extraction failed for %s: %s", video_cdn_url[:80], e)
+            logger.warning("audio extraction failed for %s: %s", (video_cdn_url or "")[:80], e)
             raise
 
         with httpx.Client(timeout=120) as client:
