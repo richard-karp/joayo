@@ -104,13 +104,13 @@ def _best_audio_url(info: dict) -> str | None:
     formats = info.get("formats") or []
     audio_only = [
         f for f in formats
-        if f.get("acodec") != "none" and f.get("vcodec") == "none" and f.get("url")
+        if f.get("acodec") not in (None, "none") and f.get("vcodec") == "none" and f.get("url")
     ]
     if audio_only:
         return audio_only[-1]["url"]
     progressive = [
         f for f in formats
-        if f.get("acodec") != "none" and f.get("vcodec") != "none" and f.get("url")
+        if f.get("acodec") not in (None, "none") and f.get("vcodec") not in (None, "none") and f.get("url")
     ]
     if progressive:
         return progressive[-1]["url"]
