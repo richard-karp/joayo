@@ -2,6 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# ffmpeg: the transcriber extracts a small audio track from reel videos before
+# sending to Groq (Whisper only needs audio, and it keeps files under Groq's
+# free-tier size cap).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 # Python deps first for layer caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

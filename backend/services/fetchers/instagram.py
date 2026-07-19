@@ -64,7 +64,7 @@ def _fetch_ytdlp(url: str) -> RawPost:
         raise ValueError("yt-dlp returned no data")
 
     caption = info.get("description") or ""
-    video_url = _best_video_url(info)
+    video_url = _best_audio_url(info)
 
     date_posted = None
     if raw_date := info.get("upload_date"):  # YYYYMMDD
@@ -93,11 +93,27 @@ def _fetch_ytdlp(url: str) -> RawPost:
     )
 
 
-def _best_video_url(info: dict) -> str | None:
-    if formats := info.get("formats"):
-        video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("url")]
-        if video_formats:
-            return video_formats[-1]["url"]
+def _best_audio_url(info: dict) -> str | None:
+    """Return a media URL that carries an audio track (used for transcription).
+
+    Instagram serves reels as DASH with separate video-only and audio-only
+    streams, so the highest-quality "video" format has no audio and transcribing
+    it yields nothing. Prefer the smallest audio-bearing stream: an audio-only
+    format first, then a progressive stream that has both audio and video.
+    """
+    formats = info.get("formats") or []
+    audio_only = [
+        f for f in formats
+        if f.get("acodec") not in (None, "none") and f.get("vcodec") == "none" and f.get("url")
+    ]
+    if audio_only:
+        return audio_only[-1]["url"]
+    progressive = [
+        f for f in formats
+        if f.get("acodec") not in (None, "none") and f.get("vcodec") not in (None, "none") and f.get("url")
+    ]
+    if progressive:
+        return progressive[-1]["url"]
     return info.get("url") or None
 
 

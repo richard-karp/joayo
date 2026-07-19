@@ -79,7 +79,7 @@ class CdnUrlCache(Base):
 
     A CDN URL appearing for many unrelated posts indicates Instagram's
     content-addressed storage is returning the same video for different posts,
-    which causes AssemblyAI to serve a cached transcript that doesn't match.
+    which causes the transcriber to serve a cached transcript that doesn't match.
     """
     __tablename__ = "cdn_url_cache"
 

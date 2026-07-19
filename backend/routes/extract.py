@@ -58,7 +58,7 @@ def _is_empty_of_signal(raw_post) -> bool:
 
 
 def _is_language_mismatch(detected_language: str | None, caption: str | None) -> bool:
-    """Return True if AssemblyAI detected English for a clearly non-Latin-script caption."""
+    """Return True if the transcriber detected English for a clearly non-Latin-script caption."""
     if not detected_language or not caption:
         return False
     if detected_language == "en":
@@ -97,8 +97,14 @@ def _upsert_cdn_cache(session, cdn_url: str, job_id: str):
 _CROSS_JOB_COLLISION_THRESHOLD = 5
 
 
-def process_job(job_id: str, posts: list[dict]):
-    """posts is a list of {url, caption?} dicts."""
+def process_job(job_id: str, posts: list[dict], force: bool = False):
+    """posts is a list of {url, caption?} dicts.
+
+    force=True re-extracts URLs even if they're already attached to a place
+    (bypasses the seen_urls skip) — used to re-run previously-processed reels
+    through the current pipeline, e.g. to recover audio-only reels that were
+    extracted caption-only before transcription was available.
+    """
     session = SessionLocal()
     try:
         job = session.get(Job, job_id)
@@ -142,7 +148,7 @@ def process_job(job_id: str, posts: list[dict]):
             url = post["url"]
             normalized = url.rstrip("/")
             is_retranscribe = normalized in retranscribe_urls
-            if normalized in seen_urls and not is_retranscribe:
+            if normalized in seen_urls and not is_retranscribe and not force:
                 job.processed = (job.processed or 0) + 1
                 session.commit()
                 continue
@@ -222,8 +228,8 @@ def process_job(job_id: str, posts: list[dict]):
                         if consecutive_transcription_failures >= PAUSE_THRESHOLD_TRANSCRIPTION:
                             _pause_job(
                                 job, session, posts[i:],
-                                "assemblyai_rate_limit",
-                                f"AssemblyAI rate limit hit {consecutive_transcription_failures} times in a row "
+                                "transcription_rate_limit",
+                                f"Groq rate limit hit {consecutive_transcription_failures} times in a row "
                                 f"(Retry-After: {e.retry_after}s). Resume after the rate limit window clears.",
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
@@ -234,9 +240,9 @@ def process_job(job_id: str, posts: list[dict]):
                         if consecutive_transcription_failures >= PAUSE_THRESHOLD_TRANSCRIPTION:
                             _pause_job(
                                 job, session, posts[i:],
-                                "assemblyai_error",
+                                "transcription_error",
                                 f"{consecutive_transcription_failures} consecutive transcription failures. "
-                                f"AssemblyAI may be down or unavailable. Resume when the service recovers.",
+                                f"Groq may be down or unavailable. Resume when the service recovers.",
                                 warnings, failed_urls, pending_review, updated_place_ids,
                             )
                             return
@@ -267,7 +273,11 @@ def process_job(job_id: str, posts: list[dict]):
                 transcript = None
                 transcript_missing = True
 
-            if is_retranscribe:
+            if is_retranscribe and not force:
+                # Re-transcribe-only shortcut: fill the transcript on existing
+                # places without re-extracting. force=True skips this and falls
+                # through to a full re-extraction, so newly-transcribed audio can
+                # surface places the caption-only pass missed.
                 if transcript:
                     to_update = [
                         p for p in
@@ -493,6 +503,7 @@ async def extract_endpoint(
     file: Optional[UploadFile] = File(None),
     urls: Optional[str] = Form(None),
     collection: Optional[str] = Form(None),
+    force: bool = Form(False),
     db: Session = Depends(get_db),
     _: None = Depends(require_extract_secret),
 ):
@@ -533,5 +544,5 @@ async def extract_endpoint(
     db.add(job)
     db.commit()
 
-    background_tasks.add_task(process_job, job_id, post_list)
+    background_tasks.add_task(process_job, job_id, post_list, force=force)
     return ExtractResponse(job_id=job_id)
