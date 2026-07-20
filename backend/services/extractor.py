@@ -1,11 +1,16 @@
+import json
+import logging
 import os
 import time
 from typing import Optional
 
 import anthropic
+import httpx
 
 from schemas import ExtractedPlace, ExtractionResult
 from services.raw_post import RawPost
+
+logger = logging.getLogger("extractor")
 
 _client: anthropic.Anthropic | None = None
 
@@ -13,6 +18,18 @@ _DEFAULT_MODEL = "claude-sonnet-4-6"
 _HARD_MODEL = "claude-opus-4-8"   # for thin/ambiguous posts needing harder judgment
 _MAX_TOKENS = 8192
 _MAX_COMMENTS = 12                # cap comments fed to the model
+
+# Extraction provider: "anthropic" (default, Claude) or "groq" (free-tier open
+# model via Groq's OpenAI-compatible API). Groq lets a bulk backfill run without
+# Anthropic credits; prod stays on Claude unless this is explicitly set.
+_PROVIDER = os.getenv("EXTRACTOR_PROVIDER", "anthropic").lower()
+_GROQ_EXTRACT_MODEL = os.getenv("GROQ_EXTRACT_MODEL", "openai/gpt-oss-120b")
+# Groq's free tier bills input + reserved max_tokens against the per-minute TPM
+# cap, so keep the output reservation modest (extraction output is small — a few
+# hundred tokens per place). 2000 keeps a typical request (~2K input + 2K
+# reserved) under the 8K free-tier TPM cap for gpt-oss-120b.
+_GROQ_MAX_TOKENS = int(os.getenv("GROQ_EXTRACT_MAX_TOKENS", "2000"))
+_GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 
 class ExtractionTruncated(Exception):
@@ -149,10 +166,102 @@ def _pick_model(raw_post: RawPost, transcript: Optional[str]) -> str:
     return _DEFAULT_MODEL
 
 
+_GROQ_JSON_INSTRUCTION = (
+    "\n\nRespond with ONLY a single JSON object of the form "
+    '{"places": [ ... ]}, where each element has exactly these fields: '
+    "location_name, category, subcategory, is_place, venue, summary, labels, "
+    "country, city, neighborhood, native_name, mention_type, insider_tips. "
+    "Use null for unknown optional fields (venue, country, city, neighborhood, "
+    'native_name), "" (not null) for summary and insider_tips when there is nothing '
+    "to add, and [] for empty labels. Always include "
+    "native_name in the local script (Korean 한글 for Korea) whenever you know it. "
+    "Output valid JSON only — no markdown fences, no commentary."
+)
+
+
+def _extract_groq(user_content: str) -> list[ExtractedPlace]:
+    """Extract via Groq's OpenAI-compatible chat API in JSON mode — the same
+    ExtractionResult shape, run on a free-tier open model (default gpt-oss-120b).
+    Used for the bulk backfill when Anthropic credits are out. JSON mode (rather
+    than forced tool-calling) keeps the request small enough for the free-tier
+    per-minute token cap and works with models that emit a bare JSON payload."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return _mock_extract()
+
+    payload = {
+        "model": _GROQ_EXTRACT_MODEL,
+        "max_tokens": _GROQ_MAX_TOKENS,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": _SYSTEM_PROMPT + _GROQ_JSON_INSTRUCTION},
+            {"role": "user", "content": user_content},
+        ],
+    }
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    data = None
+    with httpx.Client(timeout=120) as client:
+        for attempt in range(3):
+            resp = client.post(_GROQ_CHAT_URL, headers=headers, json=payload)
+            if resp.is_success:
+                data = resp.json()
+                break
+            if resp.status_code in (413, 429, 500, 502, 503) and attempt < 2:
+                ra = resp.headers.get("retry-after")
+                time.sleep(min(int(ra), 60) if (ra and ra.isdigit()) else 15)
+                continue
+            logger.warning("Groq extraction HTTP %s: %s", resp.status_code, resp.text[:400])
+            raise RuntimeError(f"Groq extraction failed: {resp.status_code} {resp.text[:300]}")
+    if data is None:
+        raise RuntimeError("Groq extraction failed after retries")
+
+    choice = (data.get("choices") or [{}])[0]
+    if choice.get("finish_reason") == "length":
+        raise ExtractionTruncated(f"Extraction output truncated at {_GROQ_MAX_TOKENS} tokens")
+
+    content = (choice.get("message") or {}).get("content") or "{}"
+    try:
+        parsed = json.loads(content)
+    except Exception as e:
+        logger.warning("Groq extraction JSON parse failed: %s | content[:300]=%s", e, content[:300])
+        raise
+
+    if isinstance(parsed, list):
+        raw_places = parsed
+    elif isinstance(parsed, dict):
+        raw_places = parsed.get("places")
+        if not isinstance(raw_places, list):
+            # Some models wrap the array under a different key — take the first list.
+            raw_places = next((v for v in parsed.values() if isinstance(v, list)), [])
+    else:
+        raw_places = []
+
+    # Validate each place individually so one malformed item doesn't drop the whole
+    # reel, and coerce the common "null for an absent required string" case (open
+    # models return null for insider_tips / summary when there's nothing to say).
+    places: list[ExtractedPlace] = []
+    for pd in raw_places:
+        if not isinstance(pd, dict):
+            continue
+        for k in ("insider_tips", "summary"):
+            if pd.get(k) is None:
+                pd[k] = ""
+        try:
+            places.append(ExtractedPlace.model_validate(pd))
+        except Exception as e:
+            logger.warning("Groq extraction: skipping invalid place: %s | %s", e, str(pd)[:200])
+    return places
+
+
 def extract(raw_post: RawPost, transcript: Optional[str]) -> list[ExtractedPlace]:
     user_content = _build_user_content(raw_post, transcript)
     if not user_content:
         return []
+
+    if _PROVIDER == "groq":
+        return _extract_groq(user_content)
 
     if not os.getenv("ANTHROPIC_API_KEY"):
         return _mock_extract()
