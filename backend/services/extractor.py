@@ -192,6 +192,12 @@ def _extract_groq(user_content: str) -> list[ExtractedPlace]:
     payload = {
         "model": _GROQ_EXTRACT_MODEL,
         "max_tokens": _GROQ_MAX_TOKENS,
+        # gpt-oss is a reasoning model; at default effort it can burn the whole
+        # max_tokens budget thinking and emit no JSON (surfaces as a 400
+        # json_validate_failed, not a finish_reason=length truncation). "low"
+        # leaves room for the payload and cuts per-request token cost — friendlier
+        # to the free-tier TPM/TPD caps, not harder on them.
+        "reasoning_effort": "low",
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [
