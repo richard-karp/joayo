@@ -315,6 +315,41 @@ def test_null_country_candidate_still_found_by_fuzzy(db_session):
     assert id1 == id2
 
 
+def test_transcript_upgrade_on_merge(db_session):
+    """A caption-only place (transcript_missing=True) must be upgraded when a later
+    transcript-based extraction of the SAME place arrives with a real transcript.
+    Regression: the merge path used to fill in missing geo/city fields but never
+    transcript/transcript_missing, so re-extractions that matched an existing place
+    silently lost the transcript and stayed transcript_missing=True."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    # 1) caption-only extraction — no transcript
+    id1, _ = find_or_merge_place(_extracted(), raw1, 37.579, 126.977, "job1", db_session,
+                                 transcript=None, transcript_missing=True)
+    # 2) transcript-based re-extraction of the same place
+    id2, is_new2 = find_or_merge_place(_extracted(), raw2, 37.579, 126.977, "job2", db_session,
+                                       transcript="Full spoken transcript of the reel.",
+                                       transcript_missing=False)
+    assert is_new2 is False and id1 == id2                 # merged into the same place
+    place = db_session.get(Place, id1)
+    assert not place.transcript_missing                    # upgraded to transcript-based
+    assert place.transcript == "Full spoken transcript of the reel."
+
+
+def test_transcript_not_downgraded_on_caption_only_merge(db_session):
+    """The reverse must NOT happen: a place that already has a transcript must not be
+    reset to caption-only by a later caption-only extraction of the same place."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_extracted(), raw1, 37.579, 126.977, "job1", db_session,
+                                 transcript="Original transcript.", transcript_missing=False)
+    find_or_merge_place(_extracted(), raw2, 37.579, 126.977, "job2", db_session,
+                        transcript=None, transcript_missing=True)
+    place = db_session.get(Place, id1)
+    assert not place.transcript_missing
+    assert place.transcript == "Original transcript."
+
+
 def test_fuzzy_name_across_categories_stays_separate(db_session):
     """A neighbourhood and a venue sharing the same area centroid (identical coords) but
     with different categories must not merge — e.g. 'Apgujeong' (see_visit) vs

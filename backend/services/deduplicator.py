@@ -257,6 +257,12 @@ def find_or_merge_place(
             existing.geocoder_place_id = geocoder_place_id
         if not existing.normalized_name:
             existing.normalized_name = normalize_name(existing.location_name)
+        # Upgrade a caption-only place once a transcript-based extraction of the same
+        # place arrives. Only ever upgrade (missing -> present), never downgrade a place
+        # that already has a transcript.
+        if existing.transcript_missing and not transcript_missing and transcript:
+            existing.transcript = transcript
+            existing.transcript_missing = False
 
         session.commit()
         return existing.id, False
