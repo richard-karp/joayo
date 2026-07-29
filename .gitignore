@@ -36,8 +36,10 @@ backend/venv/
 backend/places.db
 backend/places.db-wal
 
-# Backfill runtime data (progress / failed-URL logs)
+# Backfill runtime data (progress / failed-URL logs / retry counts)
 scripts/backfill-*.txt
+scripts/backfill-attempts.json
+scripts/backfill-*.bak-*
 backend/places.db-shm
 # local db backups/snapshots
 backend/places.db.*
