@@ -19,10 +19,12 @@ _HARD_MODEL = "claude-opus-4-8"   # for thin/ambiguous posts needing harder judg
 _MAX_TOKENS = 8192
 _MAX_COMMENTS = 12                # cap comments fed to the model
 
-# Extraction provider: "anthropic" (default, Claude) or "groq" (free-tier open
-# model via Groq's OpenAI-compatible API). Groq lets a bulk backfill run without
-# Anthropic credits; prod stays on Claude unless this is explicitly set.
-_PROVIDER = os.getenv("EXTRACTOR_PROVIDER", "anthropic").lower()
+# Extraction provider: "groq" (default, free-tier open model via Groq's
+# OpenAI-compatible API) or "anthropic" (Claude, via _MODEL/_HARD_MODEL below).
+# Groq is the default because it runs the whole pipeline on a free tier; set
+# EXTRACTOR_PROVIDER=anthropic to get Claude's judgement back on hard posts,
+# which needs ANTHROPIC_API_KEY to have credit.
+_PROVIDER = os.getenv("EXTRACTOR_PROVIDER", "groq").lower()
 _GROQ_EXTRACT_MODEL = os.getenv("GROQ_EXTRACT_MODEL", "openai/gpt-oss-120b")
 # Groq's free tier bills input + reserved max_tokens against the per-minute TPM
 # cap, so keep the output reservation modest (extraction output is small — a few
