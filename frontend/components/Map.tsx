@@ -6,7 +6,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import Link from "next/link";
 import Supercluster from "supercluster";
 import type { Category, Place } from "@/types";
-import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
+import { ALL_CATEGORIES, CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
 import RatingControl from "@/components/RatingControl";
 import MapLinks from "@/components/MapLinks";
 import { haversineM, median } from "@/lib/geo";
@@ -21,8 +21,6 @@ const PIN_COLORS: Record<Category, string> = {
   service: "#ec4899",
   guide: "#eab308",
 };
-
-const ALL_CATEGORIES = Object.keys(PIN_COLORS) as Category[];
 
 // Per-anchor popup offset so it clears the 📍 marker (which sits above the
 // coordinate) whichever direction mapbox flips it toward at the map's edges.
@@ -44,16 +42,25 @@ interface Props {
   places: Place[];
   /** Ids of the places currently expanded in the list — their pins are enlarged and the map fits to them. */
   highlightedPlaceIds: string[];
+  /** Categories switched off, owned by the page so the lists hide them too.
+   *  Omit both to drop the on-map chips — a single-pin map has nothing to filter. */
+  hiddenCategories?: Set<Category>;
+  onToggleCategory?: (cat: Category) => void;
 }
 
-export default function Map({ places, highlightedPlaceIds }: Props) {
+const NO_HIDDEN: Set<Category> = new Set();
+
+export default function Map({
+  places,
+  highlightedPlaceIds,
+  hiddenCategories = NO_HIDDEN,
+  onToggleCategory,
+}: Props) {
   const mapRef = useRef<MapRef>(null);
   const [mapReady, setMapReady] = useState(false);
   const [popup, setPopup] = useState<Place | null>(null);
   const [localPlaces, setLocalPlaces] = useState<Place[]>(places);
   const [prevPlaces, setPrevPlaces] = useState(places);
-  // Which categories render (all on by default); the on-map toggle chips flip these.
-  const [hiddenCategories, setHiddenCategories] = useState<Set<Category>>(new Set());
   // Current viewport, used to recompute clusters as the user pans/zooms.
   const [view, setView] = useState<{ bbox: [number, number, number, number]; zoom: number } | null>(null);
   const [userLoc, setUserLoc] = useState<{ lat: number; lng: number } | null>(null);
@@ -101,15 +108,6 @@ export default function Map({ places, highlightedPlaceIds }: Props) {
     const b = map?.getBounds();
     if (!map || !b) return;
     setView({ bbox: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], zoom: map.getZoom() });
-  }, []);
-
-  const toggleCategory = useCallback((cat: Category) => {
-    setHiddenCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(cat)) next.delete(cat);
-      else next.add(cat);
-      return next;
-    });
   }, []);
 
   const handleNearMe = useCallback(() => {
@@ -291,6 +289,13 @@ export default function Map({ places, highlightedPlaceIds }: Props) {
           <div className="p-1 space-y-2 text-sm">
             <div>
               <p className="font-semibold text-zinc-900 leading-tight">{popup.location_name}</p>
+              {/* Which city this is. Names like "Chinatown" or "Jung-gu" exist in many
+                  cities, so the pin alone doesn't say which one you're looking at. */}
+              {(popup.neighborhood || popup.city) && (
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  {[popup.neighborhood, popup.city].filter(Boolean).join(" · ")}
+                </p>
+              )}
               <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 {popup.category && (
                   <span className={`inline-block px-2 py-0.5 rounded-full text-xs ${CATEGORY_COLORS[popup.category as Category]}`}>
@@ -336,14 +341,16 @@ export default function Map({ places, highlightedPlaceIds }: Props) {
       )}
     </MapGL>
 
-      {/* On-map category toggles */}
+      {/* On-map category toggles — these write to the page's filter, so switching one
+          off also drops it from the list beside the map. */}
+      {onToggleCategory && (
       <div className="absolute top-2 left-2 flex flex-wrap gap-1 max-w-[70%]">
         {ALL_CATEGORIES.map((cat) => {
           const on = !hiddenCategories.has(cat);
           return (
             <button
               key={cat}
-              onClick={() => toggleCategory(cat)}
+              onClick={() => onToggleCategory(cat)}
               title={on ? `Hide ${CATEGORY_LABELS[cat]}` : `Show ${CATEGORY_LABELS[cat]}`}
               className={`text-[11px] px-2 py-0.5 rounded-full border shadow-sm transition-colors ${
                 on ? "bg-white text-zinc-700 border-zinc-200" : "bg-zinc-100 text-zinc-400 border-transparent line-through"
@@ -355,6 +362,7 @@ export default function Map({ places, highlightedPlaceIds }: Props) {
           );
         })}
       </div>
+      )}
 
       {/* Near me */}
       <button

@@ -1,5 +1,11 @@
 export type Category = "eat" | "see_visit" | "do" | "shop" | "service" | "guide";
 
+// Display/filter order. The single source of truth for "every category" — the map
+// chips, the category pills, and the creators filter all iterate this.
+export const ALL_CATEGORIES: Category[] = [
+  "eat", "see_visit", "do", "shop", "service", "guide",
+];
+
 export interface Author {
   username: string;
   platform_id: string | null;

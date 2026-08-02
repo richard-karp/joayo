@@ -1,70 +1,58 @@
 'use client';
 
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import { Badge } from "@/components/ui/badge";
+import CategoryPills from "@/components/CategoryPills";
 import PlaceCard from "@/components/PlaceCard";
+import { soleVisibleCategory, visibleByCategory } from "@/lib/categories";
 import type { Category, Place } from "@/types";
 import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/types";
 
 interface Props {
+  /** Every place for the current server-side filters — pill counts are drawn from
+   *  this unfiltered set, so a hidden category can still be switched back on. */
   places: Place[];
   expandedIds: string[];
   onPlaceClick: (placeId: string) => void;
   activeLabel: string | null;
   onLabelClick: (label: string) => void;
+  hiddenCategories: Set<Category>;
+  /** Single-select: a category to isolate, or null to show all. */
+  onCategorySelect: (cat: Category | null) => void;
 }
 
-const CATEGORY_ORDER: Category[] = ["eat", "see_visit", "do", "shop", "service", "guide"];
-
-export default function CategoryView({ places, expandedIds, onPlaceClick, activeLabel, onLabelClick }: Props) {
-  const [activeCategory, setActiveCategory] = useState<Category | null>(null);
+export default function CategoryView({
+  places,
+  expandedIds,
+  onPlaceClick,
+  activeLabel,
+  onLabelClick,
+  hiddenCategories,
+  onCategorySelect,
+}: Props) {
+  const activeCategory = soleVisibleCategory(hiddenCategories);
   const expanded = new Set(expandedIds);
 
   const placePlaces = places.filter((p) => p.is_place);
 
-  const countsByCategory = CATEGORY_ORDER.reduce<Record<string, number>>((acc, cat) => {
-    acc[cat] = placePlaces.filter((p) => p.category === cat).length;
-    return acc;
-  }, {});
-
-  const filtered = placePlaces
-    .filter((p) => !activeCategory || p.category === activeCategory)
+  const filtered = visibleByCategory(placePlaces, hiddenCategories)
     .sort((a, b) => b.source_urls.length - a.source_urls.length);
 
   return (
     <div>
-      {/* Category pills */}
-      <div className="flex items-center gap-2 flex-wrap mb-4">
-        <button
-          onClick={() => setActiveCategory(null)}
-          className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-            activeCategory === null
-              ? "bg-zinc-900 text-white border-zinc-900"
-              : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
-          }`}
-        >
-          All
-          <span className="ml-1 opacity-60">{placePlaces.length}</span>
-        </button>
-        {CATEGORY_ORDER.filter((cat) => countsByCategory[cat] > 0).map((cat) => (
-          <button
-            key={cat}
-            onClick={() => setActiveCategory((prev) => (prev === cat ? null : cat))}
-            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-              activeCategory === cat
-                ? "bg-zinc-900 text-white border-zinc-900"
-                : "bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400"
-            }`}
-          >
-            {CATEGORY_LABELS[cat]}
-            <span className="ml-1 opacity-60">{countsByCategory[cat]}</span>
-          </button>
-        ))}
-      </div>
+      <CategoryPills
+        items={placePlaces}
+        hiddenCategories={hiddenCategories}
+        onCategorySelect={onCategorySelect}
+      />
 
       {/* Place list */}
       <h2 className="text-sm font-semibold text-zinc-500 uppercase tracking-wide mb-3">
-        {activeCategory ? CATEGORY_LABELS[activeCategory] : "All categories"}
+        {activeCategory
+          ? CATEGORY_LABELS[activeCategory]
+          : hiddenCategories.size > 0
+          ? "Selected categories"
+          : "All categories"}
       </h2>
       <table className="w-full text-sm">
         <thead>

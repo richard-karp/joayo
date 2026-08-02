@@ -2,7 +2,7 @@
 
 import { Badge } from "@/components/ui/badge";
 import type { Category } from "@/types";
-import { CATEGORY_LABELS } from "@/types";
+import { ALL_CATEGORIES, CATEGORY_LABELS } from "@/types";
 
 interface Props {
   activeCategory: Category | null;
@@ -10,8 +10,6 @@ interface Props {
   authorFilter: string | null;
   onAuthorFilterClear: () => void;
 }
-
-const CATEGORIES: Category[] = ["eat", "see_visit", "do", "shop", "guide"];
 
 export default function Filters({ activeCategory, onCategoryChange, authorFilter, onAuthorFilterClear }: Props) {
   return (
@@ -26,7 +24,7 @@ export default function Filters({ activeCategory, onCategoryChange, authorFilter
       >
         All
       </button>
-      {CATEGORIES.map((cat) => (
+      {ALL_CATEGORIES.map((cat) => (
         <button
           key={cat}
           onClick={() => onCategoryChange(activeCategory === cat ? null : cat)}

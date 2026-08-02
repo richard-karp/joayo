@@ -2,18 +2,21 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CategoryPills from "@/components/CategoryPills";
 import CategoryView from "@/components/CategoryView";
 import CreatorCard from "@/components/CreatorCard";
 import Filters from "@/components/Filters";
 import Leaderboard from "@/components/Leaderboard";
 import PlacesRanking from "@/components/PlacesRanking";
+import ThingsList from "@/components/ThingsList";
 import { getFilters, getPlaces, exportAllUrl } from "@/lib/api";
+import { isolateCategory, soleVisibleCategory, toggleCategory, visibleByCategory } from "@/lib/categories";
 import type { Category, Place } from "@/types";
 
 const Map = dynamic(() => import("@/components/Map"), { ssr: false });
 
-type View = "creators" | "places" | "categories";
+type View = "creators" | "places" | "categories" | "things";
 
 interface FilterData {
   countries: { name: string; place_count: number }[];
@@ -36,8 +39,12 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<View>("places");
 
+  // Category filter — owned here, not by the map or the list, so the pins and the
+  // rows below them always show the same set. Holds the categories switched OFF;
+  // the map's multi-toggle chips and the single-select pills both write to it.
+  const [hiddenCategories, setHiddenCategories] = useState<Set<Category>>(new Set());
+
   // Creators view state
-  const [activeCategory, setActiveCategory] = useState<Category | null>(null);
   const [authorFilter, setAuthorFilter] = useState<string | null>(null);
   const [selectedCreator, setSelectedCreator] = useState<string | null>(null);
 
@@ -51,6 +58,7 @@ export default function DashboardPage() {
   // a cascading post-render re-render.
   const filterKey = JSON.stringify([
     selectedCountry, selectedCity, selectedNeighborhood, selectedSubcategory, selectedLabel, markFilter, search,
+    [...hiddenCategories].sort(),
   ]);
   const [prevFilterKey, setPrevFilterKey] = useState(filterKey);
   if (filterKey !== prevFilterKey) {
@@ -98,6 +106,33 @@ export default function DashboardPage() {
     setSelectedLabel((prev) => (prev === label ? null : label));
   }, []);
 
+  // Every list renders this; the map takes the unfiltered set and hides pins itself
+  // so that switching a category off doesn't yank the camera to a new bounding box.
+  const visiblePlaces = useMemo(
+    () => visibleByCategory(places, hiddenCategories),
+    [places, hiddenCategories],
+  );
+  const visibleVenues = useMemo(() => visiblePlaces.filter((p) => p.is_place), [visiblePlaces]);
+  // Unfiltered. The Things pill row counts from allThings (a hidden category still needs
+  // a count so it can be switched back on), and ThingsList uses allVenues purely as a
+  // name→place lookup for links — a filtered lookup would silently drop the link on a
+  // thing whose venue happens to sit in a hidden category.
+  const allVenues = useMemo(() => places.filter((p) => p.is_place), [places]);
+  const allThings = useMemo(() => places.filter((p) => !p.is_place), [places]);
+  const things = useMemo(
+    () => visibleByCategory(allThings, hiddenCategories),
+    [allThings, hiddenCategories],
+  );
+  const activeCategory = soleVisibleCategory(hiddenCategories);
+
+  const handleToggleCategory = useCallback((cat: Category) => {
+    setHiddenCategories((prev) => toggleCategory(prev, cat));
+  }, []);
+
+  const handleCategorySelect = useCallback((cat: Category | null) => {
+    setHiddenCategories((prev) => (cat === null ? new Set<Category>() : isolateCategory(prev, cat)));
+  }, []);
+
   const citiesForCountry = filters?.cities.filter((c) => c.country === selectedCountry) ?? [];
   const neighborhoodsForCity = selectedCity
     ? (filters?.neighborhoods.filter((n) => n.city === selectedCity) ?? [])
@@ -122,6 +157,7 @@ export default function DashboardPage() {
   const VIEW_TABS: { id: View; label: string }[] = [
     { id: "places", label: "Places" },
     { id: "categories", label: "Categories" },
+    { id: "things", label: "Things" },
     { id: "creators", label: "Creators" },
   ];
 
@@ -268,7 +304,11 @@ export default function DashboardPage() {
                 </button>
               ))}
               <span className="ml-auto text-sm text-zinc-400 pb-2">
-                {loading ? "Loading…" : `${places.filter(p => p.is_place).length} place${places.filter(p => p.is_place).length !== 1 ? "s" : ""}`}
+                {loading
+                  ? "Loading…"
+                  : view === "things"
+                  ? `${things.length} thing${things.length !== 1 ? "s" : ""}`
+                  : `${visibleVenues.length} place${visibleVenues.length !== 1 ? "s" : ""}`}
               </span>
             </div>
 
@@ -332,9 +372,12 @@ export default function DashboardPage() {
                   🏷 {selectedLabel} <span className="opacity-70">✕</span>
                 </button>
               )}
-              {(search || selectedSubcategory || selectedLabel || markFilter) && (
+              {/* hiddenCategories is included because the map chips can hide a category
+                  in one view and the filter then follows you into another — Clear has to
+                  be able to undo it from wherever you end up. */}
+              {(search || selectedSubcategory || selectedLabel || markFilter || hiddenCategories.size > 0) && (
                 <button
-                  onClick={() => { setSearch(""); setSelectedSubcategory(null); setSelectedLabel(null); setMarkFilter(null); }}
+                  onClick={() => { setSearch(""); setSelectedSubcategory(null); setSelectedLabel(null); setMarkFilter(null); setHiddenCategories(new Set()); }}
                   className="text-xs text-zinc-500 hover:text-zinc-900 border border-zinc-200 rounded-lg px-3 py-1.5 transition-colors"
                 >
                   Clear
@@ -348,13 +391,19 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-4 flex-wrap">
                   <Filters
                     activeCategory={activeCategory}
-                    onCategoryChange={setActiveCategory}
+                    onCategoryChange={handleCategorySelect}
                     authorFilter={authorFilter}
                     onAuthorFilterClear={() => setAuthorFilter(null)}
                   />
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                   <div>
+                    {/* activeCategory is null unless exactly ONE category is visible,
+                        because /api/leaderboard takes a single `category`. So a
+                        multi-category selection (only reachable via the map chips)
+                        filters the pins and the lists but leaves the leaderboard
+                        showing every creator. Making it follow means a repeatable
+                        `category` param on the endpoint. */}
                     <Leaderboard
                       activeAuthor={authorFilter}
                       activeCategory={activeCategory}
@@ -364,12 +413,17 @@ export default function DashboardPage() {
                   </div>
                   <div className="order-first lg:order-none lg:sticky lg:top-6 space-y-0">
                     <div className="h-72 lg:h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
-                      <Map places={places} highlightedPlaceIds={[]} />
+                      <Map
+                        places={places}
+                        highlightedPlaceIds={[]}
+                        hiddenCategories={hiddenCategories}
+                        onToggleCategory={handleToggleCategory}
+                      />
                     </div>
                     {selectedCreator && (
                       <CreatorCard
                         username={selectedCreator}
-                        places={places}
+                        places={visiblePlaces}
                         onClose={() => {
                           setSelectedCreator(null);
                           setAuthorFilter(null);
@@ -386,7 +440,7 @@ export default function DashboardPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
                 <div>
                   <PlacesRanking
-                    places={places}
+                    places={visiblePlaces}
                     expandedIds={expandedPlaceIds}
                     onPlaceClick={handlePlaceClick}
                     activeLabel={selectedLabel}
@@ -395,7 +449,12 @@ export default function DashboardPage() {
                 </div>
                 <div className="order-first lg:order-none lg:sticky lg:top-6">
                   <div className="h-72 lg:h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
-                    <Map places={places} highlightedPlaceIds={expandedPlaceIds} />
+                    <Map
+                      places={places}
+                      highlightedPlaceIds={expandedPlaceIds}
+                      hiddenCategories={hiddenCategories}
+                      onToggleCategory={handleToggleCategory}
+                    />
                   </div>
                 </div>
               </div>
@@ -411,13 +470,39 @@ export default function DashboardPage() {
                     onPlaceClick={handlePlaceClick}
                     activeLabel={selectedLabel}
                     onLabelClick={handleLabelClick}
+                    hiddenCategories={hiddenCategories}
+                    onCategorySelect={handleCategorySelect}
                   />
                 </div>
                 <div className="order-first lg:order-none lg:sticky lg:top-6">
                   <div className="h-72 lg:h-[600px] rounded-xl overflow-hidden shadow-sm border border-zinc-200">
-                    <Map places={places} highlightedPlaceIds={expandedPlaceIds} />
+                    <Map
+                      places={places}
+                      highlightedPlaceIds={expandedPlaceIds}
+                      hiddenCategories={hiddenCategories}
+                      onToggleCategory={handleToggleCategory}
+                    />
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Things view — the is_place=false items (dishes, products, tips) */}
+            {view === "things" && (
+              <div>
+                <CategoryPills
+                  items={allThings}
+                  hiddenCategories={hiddenCategories}
+                  onCategorySelect={handleCategorySelect}
+                />
+                <ThingsList
+                  things={things}
+                  venues={allVenues}
+                  expandedIds={expandedPlaceIds}
+                  onPlaceClick={handlePlaceClick}
+                  activeLabel={selectedLabel}
+                  onLabelClick={handleLabelClick}
+                />
               </div>
             )}
           </>
