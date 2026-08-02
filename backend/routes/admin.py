@@ -141,17 +141,38 @@ def _places_match(
                 and _fuzz.ratio(a_name, b_name) >= _FUZZY_RATIO_THRESHOLD):
             return True
 
+    a_city = (a.city or "").strip().lower()
+    b_city = (b.city or "").strip().lower()
+
     if a_name == b_name:
         if both_coords:
-            # Exact name but both geocoded: only the same location, not two chain
-            # branches far apart. Mirrors the live deduplicator's fuzzy coord radius.
-            return dist <= _FUZZY_COORD_RADIUS_M  # type: ignore[operator]
-        # Chain guard: same name in different cities are distinct venues
-        a_city = (a.city or "").strip().lower()
-        b_city = (b.city or "").strip().lower()
-        if a_city and b_city and a_city != b_city:
-            return False
-        return True
+            # Inside the fuzzy radius the pins settle it: one venue geocoded twice.
+            # City and neighborhood labels disagree across boundaries and are partly
+            # extractor guesses, so they can't overrule proximity at this range — and
+            # no chain puts two branches 500 m apart. Mirrors _match_score's tier 1,
+            # which merges an exact name inside this radius without reading the labels;
+            # gating on the labels here would make the retroactive pass refuse merges
+            # that live dedup performs.
+            if dist <= _FUZZY_COORD_RADIUS_M:  # type: ignore[operator]
+                return True
+            # Beyond it, only the labels separate "one venue geocoded badly" — a POI
+            # hit vs. an area centroid, which can land kilometres apart — from two
+            # genuine branches. Mirrors deduplicator._match_score's tier 2.
+            if not (a_city and b_city):
+                # Nothing to gate on, so don't merge two unlabelled rows this far
+                # apart; they may be branches in different places.
+                return False
+            # Chain guard: same name in different cities are distinct venues.
+            if a_city != b_city:
+                return False
+            # Same city. normalize_name strips parentheticals, so "무쇠김치삼겹 (Hongdae)"
+            # and "… (Hannam-dong)" arrive here as the same name and the neighborhood is
+            # all that still tells the two branches apart. Mirrors _branch_conflict.
+            a_nb = (a.neighborhood or "").strip().lower()
+            b_nb = (b.neighborhood or "").strip().lower()
+            return not (a_nb and b_nb and a_nb != b_nb)
+        # No coordinates: the city label is the only chain guard available.
+        return not (a_city and b_city and a_city != b_city)
 
     # Fuzzy name matching is for places only. For a non-place item (dish/product) the
     # name IS its identity — "Abalone Hot Pot Rice" and "Eel Hot Pot Rice" at the same
@@ -167,8 +188,6 @@ def _places_match(
         if both_coords:
             return dist <= _FUZZY_COORD_RADIUS_M  # type: ignore[operator]
         # Chain guard for fuzzy name-only matches
-        a_city = (a.city or "").strip().lower()
-        b_city = (b.city or "").strip().lower()
         if a_city and b_city and a_city != b_city:
             return False
         return True

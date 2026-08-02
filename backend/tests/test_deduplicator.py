@@ -366,3 +366,60 @@ def test_fuzzy_name_across_categories_stays_separate(db_session):
     id2, is_new2 = find_or_merge_place(venue, raw2, 37.5243, 127.0294, "job1", db_session)
     assert is_new2 is True
     assert id1 != id2
+
+
+# ── Same venue geocoded twice, far apart ──────────────────────────────────────
+
+def _venue(name: str, city: str, neighborhood: str | None = None) -> ExtractedPlace:
+    return ExtractedPlace(
+        location_name=name, category="eat", subcategory="restaurant", is_place=True,
+        country="South Korea", city=city, neighborhood=neighborhood,
+        summary="A place.", labels=[], insider_tips="",
+    )
+
+
+def test_exact_name_same_city_merges_despite_distant_coords(db_session):
+    """One venue geocoded twice can land kilometres apart — a POI hit vs. an area
+    centroid — so within a single city the exact name wins over the distance gate."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_venue("Gangneung Arte Museum", "Gangneung"),
+                                 raw1, 37.7917, 128.9075, "job1", db_session)
+    # ~11 km away: far outside the 500 m fuzzy radius
+    id2, is_new2 = find_or_merge_place(_venue("Gangneung Arte Museum", "Gangneung"),
+                                       raw2, 37.7061, 129.0123, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2
+
+
+def test_exact_name_different_city_stays_separate(db_session):
+    """Chain branches in different cities are distinct venues."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    find_or_merge_place(_venue("Cafe Knotted", "Seoul"), raw1, 37.5242, 127.0382, "job1", db_session)
+    _, is_new2 = find_or_merge_place(_venue("Cafe Knotted", "Jeju"), raw2, 33.4890, 126.4983, "job1", db_session)
+    assert is_new2 is True
+
+
+def test_exact_name_same_city_different_neighborhood_stays_separate(db_session):
+    """Two branches inside ONE city. normalize_name strips the parenthetical that made
+    the names distinct, so the neighborhood is the only remaining disambiguator."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    find_or_merge_place(_venue("Mus̆oe Kimchi (Hannam-dong)", "Seoul", "Hannam-dong"),
+                        raw1, 37.5342, 127.0058, "job1", db_session)
+    _, is_new2 = find_or_merge_place(_venue("Mus̆oe Kimchi (Hongdae)", "Seoul", "Hongdae"),
+                                     raw2, 37.5526, 126.9227, "job1", db_session)
+    assert is_new2 is True
+
+
+def test_missing_neighborhood_is_not_a_branch_signal(db_session):
+    """One row simply lacking a neighborhood label must not block the merge."""
+    raw1 = make_raw_post(url="https://www.instagram.com/p/A1/", author="user_a", author_platform_id="1")
+    raw2 = make_raw_post(url="https://www.instagram.com/p/B2/", author="user_b", author_platform_id="2")
+    id1, _ = find_or_merge_place(_venue("Seoul Metro", "Seoul", "Gangnam"),
+                                 raw1, 37.4981, 127.0280, "job1", db_session)
+    id2, is_new2 = find_or_merge_place(_venue("Seoul Metro", "Seoul", None),
+                                       raw2, 37.4983, 126.8775, "job1", db_session)
+    assert is_new2 is False
+    assert id1 == id2

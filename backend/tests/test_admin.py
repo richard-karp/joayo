@@ -180,3 +180,86 @@ def test_dedupe_places_default_commits_exact_dish_merge(db_session):
     db_session.expire_all()
     names = sorted(p.location_name for p in db_session.query(Place).all())
     assert names == ["Abalone Hot Pot Rice", "Eel Hot Pot Rice", "Jeju Black Pork"]
+
+
+# ── Retroactive venue dedup: one venue geocoded twice ─────────────────────────
+
+def _venue(name, *, city, lat, lng, neighborhood=None):
+    return Place(
+        id=str(uuid4()),
+        location_name=name,
+        normalized_name=name.lower(),
+        category="eat",
+        is_place=True,
+        country="South Korea",
+        city=city,
+        neighborhood=neighborhood,
+        lat=lat,
+        lng=lng,
+        source_urls=["https://x/" + str(uuid4())],
+        platform="instagram",
+    )
+
+
+def test_places_match_exact_name_same_city_merges_despite_distance():
+    """Mirrors deduplicator tier 2: within one city the exact name beats the 500 m gate,
+    because the same venue geocoded twice can land kilometres apart."""
+    a = _venue("Gangneung Arte Museum", city="Gangneung", lat=37.7917, lng=128.9075)
+    b = _venue("Gangneung Arte Museum", city="Gangneung", lat=37.7061, lng=129.0123)
+    assert _places_match(a, b) is True
+
+
+def test_places_match_exact_name_different_city_does_not_merge():
+    a = _venue("Cafe Knotted", city="Seoul", lat=37.5242, lng=127.0382)
+    b = _venue("Cafe Knotted", city="Jeju", lat=33.4890, lng=126.4983)
+    assert _places_match(a, b) is False
+
+
+def test_places_match_same_city_different_neighborhood_does_not_merge():
+    """Two branches within one city — the neighborhood is the only disambiguator left
+    once normalize_name has stripped the parenthetical from the names."""
+    a = _venue("Mus Kimchi", city="Seoul", neighborhood="Hannam-dong", lat=37.5342, lng=127.0058)
+    b = _venue("Mus Kimchi", city="Seoul", neighborhood="Hongdae", lat=37.5526, lng=126.9227)
+    assert _places_match(a, b) is False
+
+
+def test_places_match_missing_neighborhood_still_merges():
+    """A row simply lacking a neighborhood label is not evidence of a second branch."""
+    a = _venue("Seoul Metro", city="Seoul", neighborhood="Gangnam", lat=37.4981, lng=127.0280)
+    b = _venue("Seoul Metro", city="Seoul", neighborhood=None, lat=37.4983, lng=126.8775)
+    assert _places_match(a, b) is True
+
+
+def test_places_match_unlabelled_cities_fall_back_to_proximity():
+    """With no city on either row there is nothing to gate on, so distance still rules."""
+    a = _venue("Some Cafe", city=None, lat=37.5000, lng=127.0000)
+    b = _venue("Some Cafe", city=None, lat=37.7000, lng=127.3000)
+    assert _places_match(a, b) is False
+
+
+# The 150–500 m band: past the tier-3 coordinate match but inside the fuzzy radius.
+# Here the labels must NOT override proximity — live dedup (_match_score tier 1) merges
+# an exact name at this range without consulting them, and the retroactive pass has to
+# agree or the two drift apart.
+
+def test_places_match_exact_name_nearby_merges_despite_city_labels():
+    """~300 m apart with different city labels: one venue near a boundary that the two
+    posts labelled differently, not a chain — no chain has branches 300 m apart."""
+    a = _venue("Sky Bakery", city="Seoul", lat=37.5000, lng=126.8600)
+    b = _venue("Sky Bakery", city="Gwangmyeong", lat=37.5027, lng=126.8600)
+    assert _places_match(a, b) is True
+
+
+def test_places_match_exact_name_nearby_merges_despite_neighborhood_labels():
+    """Same, for the neighborhood branch guard: 300 m straddles an area boundary far
+    more often than it separates two branches of one venue."""
+    a = _venue("Sky Bakery", city="Seoul", neighborhood="Hannam-dong", lat=37.5340, lng=127.0058)
+    b = _venue("Sky Bakery", city="Seoul", neighborhood="Itaewon-dong", lat=37.5367, lng=127.0058)
+    assert _places_match(a, b) is True
+
+
+def test_places_match_exact_name_just_beyond_radius_respects_city_label():
+    """~1.1 km apart, so the labels are back in charge and the chain guard applies."""
+    a = _venue("Sky Bakery", city="Seoul", lat=37.5000, lng=126.8600)
+    b = _venue("Sky Bakery", city="Gwangmyeong", lat=37.5100, lng=126.8600)
+    assert _places_match(a, b) is False

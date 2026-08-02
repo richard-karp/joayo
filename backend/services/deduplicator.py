@@ -53,6 +53,24 @@ def _city_conflict(a: str | None, b: str | None) -> bool:
     return False
 
 
+def _same_city(a: str | None, b: str | None) -> bool:
+    """Both rows carry the same non-empty city label."""
+    return bool(a and b and a.strip().lower() == b.strip().lower())
+
+
+def _branch_conflict(extracted: ExtractedPlace, place: Place) -> bool:
+    """Two branches of one chain within a single city.
+
+    `normalize_name` strips parentheticals, so the disambiguator that made the names
+    distinct ("무쇠김치삼겹 (Hongdae)" vs "… (Hannam-dong)") is gone by match time and
+    the neighborhood is the only thing left that separates them. Requires BOTH labels
+    to be present — one row simply missing a neighborhood is not evidence of a branch.
+    """
+    a = (extracted.neighborhood or "").strip().lower()
+    b = (place.neighborhood or "").strip().lower()
+    return bool(a and b and a != b)
+
+
 def _match_score(
     extracted: ExtractedPlace,
     norm: str,
@@ -64,7 +82,7 @@ def _match_score(
 
     Returns (tier, value) — higher tier wins, higher value breaks ties — or None.
       tier 3: coordinate proximity (<=150m) with a plausible name or same-category same-door
-      tier 2: exact normalized name (no coords)
+      tier 2: exact normalized name (no coords, or both coords within one city)
       tier 1: fuzzy name (within coord radius, or city-guarded when no coords)
     """
     pnorm = normalize_name(place.location_name)
@@ -99,6 +117,17 @@ def _match_score(
         if _city_conflict(extracted.city, place.city):
             return None
         return (2, 0.0)
+
+    # Tier 2 — exact normalized name, both geocoded, same city. Geocoding the same
+    # venue twice can land the pins kilometres apart (a POI hit vs. an area centroid),
+    # so distance can't arbitrate here; the city label does. Two venues sharing an
+    # exact name within ONE city is far rarer than one venue geocoded badly, while
+    # genuine chain branches ("Cafe Knotted" in Seoul and Jeju) sit in different
+    # cities and are still kept apart by the city gate.
+    if exact and both_coords and _same_city(extracted.city, place.city):
+        if _branch_conflict(extracted, place):
+            return None
+        return (2, -dist)
 
     # Tier 1 — fuzzy name (blocked across a category conflict)
     if (tsr >= _FUZZY_TOKEN_SET_THRESHOLD and rat >= _FUZZY_RATIO_THRESHOLD
