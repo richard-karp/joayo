@@ -8,6 +8,16 @@ collection's ambient *setting* rather than a recommendation:
     (e.g. "South Korea" in a Korea trip).
   - the DOMINANT city: likewise for `city` above `city_threshold`, when it
     appears as a BARE item with no neighborhood (e.g. "Seoul").
+  - ANY administrative geography: an item whose name is just a city or
+    neighborhood label that this collection already uses as a location *field* —
+    "Busan", "Hongdae", "Jeju Island". These are the setting a recommendation
+    sits in, not the recommendation; geocoding them drops a pin on an area
+    centroid (our "Busan" landed on Haeundae Beach). Unlike the dominant-city
+    rule this needs no *frequency* threshold — naming the area you are already
+    browsing adds nothing however often it comes up — but it does require the
+    item's own subcategory to be an area type, and a neighborhood label has to
+    be reused (`_MIN_LABEL_USES`) and confined to a single city before it counts
+    as a label at all. See the constants below for why each guard is load-bearing.
   - known media titles: a tiny denylist — the one class that can't be derived
     from the data (a TV show isn't a place at any frequency).
 
@@ -55,8 +65,46 @@ _COUNTRY_ALIASES = {
 _COUNTRY_NAMES |= set(_COUNTRY_ALIASES.values())
 
 
+# Generic geography words that trail an area name ("Jeju Island", "Busan City").
+# Stripped before matching a name against the collection's own location labels, so
+# the label "Jeju" still catches the item "Jeju Island". Deliberately excludes the
+# Korean administrative suffixes (-dong, -gu, -ro) — those are load-bearing parts of
+# real venue names ("Ikseondong Hanok Village") and stripping them over-matches.
+_GEO_SUFFIXES = frozenset({
+    "island", "city", "province", "prefecture", "county", "district",
+    "area", "region", "neighborhood", "neighbourhood",
+})
+
+# Subcategories that describe an AREA rather than somewhere with a front door. The
+# geography rule requires one of these, so a venue that merely shares its name with a
+# location label ("Seoul Forest" the park, "Gwangjang Market", "Incheon Airport")
+# stays on the map. Extraction assigns these, so they track the LLM's own judgement.
+_AREA_SUBCATEGORIES = frozenset({
+    "neighborhood", "neighbourhood", "district", "shopping_district",
+    "island", "city", "region", "province", "day_trip", "area",
+})
+
+# A neighborhood label has to be shared by at least this many rows to count as real
+# geography. Venue names leak into the neighborhood column one-off ("Seoul Forest",
+# "Miryang Market" each appear once) and would otherwise become false labels; genuine
+# areas are reused across posts. City labels skip this — they come from the geocoder.
+_MIN_LABEL_USES = 2
+
+
 def _norm(s):
     return (s or "").strip().casefold()
+
+
+def _geo_key(name):
+    """Casefolded name with a trailing generic geography word removed.
+
+    "Jeju Island" -> "jeju", "Busan" -> "busan". Returns "" for a name that is
+    ONLY a suffix word, so a bare "Island" never matches anything.
+    """
+    tokens = _norm(name).replace(",", " ").split()
+    while tokens and tokens[-1] in _GEO_SUFFIXES:
+        tokens.pop()
+    return " ".join(tokens)
 
 
 def _canon_country(name):
@@ -74,7 +122,7 @@ def compute_ambient(session, *, country_threshold=0.6, city_threshold=0.5,
     per-place plan: [(place_id, reason_or_None), ...]."""
     media = {_norm(m) for m in (DEFAULT_MEDIA if media_denylist is None else media_denylist)}
     rows = session.query(Place.id, Place.location_name, Place.country,
-                         Place.city, Place.neighborhood).all()
+                         Place.city, Place.neighborhood, Place.subcategory).all()
     total = len(rows)
     if not total:
         return {"dominant_country": None, "dominant_city": None, "plan": []}
@@ -100,6 +148,30 @@ def compute_ambient(session, *, country_threshold=0.6, city_threshold=0.5,
         if cnt / total >= city_threshold:
             dominant_city = name
 
+    # Every city / neighborhood label this collection uses as a location FIELD.
+    # An item whose own name is one of these is describing the setting, not a venue.
+    # Derived from the data, so it needs no hardcoded gazetteer and adapts to any
+    # destination — a Tokyo collection yields Tokyo's wards the same way.
+    geo_labels = {_geo_key(r.city) for r in rows if _norm(r.city)}
+
+    # Neighborhood labels are noisier than city labels, so they carry two guards.
+    nb_cities: dict[str, set[str]] = {}
+    for r in rows:
+        if _norm(r.neighborhood) and _norm(r.city):
+            nb_cities.setdefault(_geo_key(r.neighborhood), set()).add(_norm(r.city))
+    nb_uses = Counter(_geo_key(r.neighborhood) for r in rows if _norm(r.neighborhood))
+    geo_labels |= {
+        nb for nb, c in nb_uses.items()
+        if c >= _MIN_LABEL_USES
+        # A label found in more than one city is a generic descriptor, not this
+        # collection's setting — "Chinatown" (Incheon and New York) and "Jung-gu"
+        # (Incheon and Seoul) name a kind of district that many cities have. The
+        # specific instance is a destination you go to, so it keeps its pin; the
+        # city shown alongside it is what disambiguates which one it is.
+        and len(nb_cities.get(nb, ())) <= 1
+    }
+    geo_labels.discard("")
+
     plan = []
     for r in rows:
         ln = _norm(r.location_name)
@@ -110,6 +182,9 @@ def compute_ambient(session, *, country_threshold=0.6, city_threshold=0.5,
             reason = "home_country"
         elif dominant_city and ln == dominant_city and not _norm(r.neighborhood):
             reason = "home_city"
+        elif (_norm(r.subcategory) in _AREA_SUBCATEGORIES
+                and _geo_key(r.location_name) in geo_labels):
+            reason = "geography"
         plan.append((r.id, reason))
 
     return {"dominant_country": dominant_country, "dominant_city": dominant_city, "plan": plan}
@@ -124,7 +199,7 @@ def flag_ambient_places(session, *, country_threshold=0.6, city_threshold=0.5,
     """
     res = compute_ambient(session, country_threshold=country_threshold,
                           city_threshold=city_threshold, media_denylist=media_denylist)
-    counts = {"home_country": 0, "home_city": 0, "media": 0}
+    counts = {"home_country": 0, "home_city": 0, "media": 0, "geography": 0}
     flag_ids = set()
     for pid, reason in res["plan"]:
         if reason is not None:

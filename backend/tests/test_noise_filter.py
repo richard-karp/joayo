@@ -5,13 +5,14 @@ from models import Place
 from services import noise_filter
 
 
-def _place(session, name, *, city=None, country=None, neighborhood=None):
+def _place(session, name, *, city=None, country=None, neighborhood=None, subcategory=None):
     p = Place(
         id=str(uuid4()),
         location_name=name,
         city=city,
         country=country,
         neighborhood=neighborhood,
+        subcategory=subcategory,
         source_urls=[f"https://example/{name}"],
         is_context=False,
     )
@@ -79,7 +80,7 @@ def test_multi_country_trip_flags_nothing(db_session):
     res = noise_filter.flag_ambient_places(db_session)
     assert res["dominant_country"] is None          # nothing clears 60%
     assert res["dominant_city"] is None
-    assert res["flagged"] == {"home_country": 0, "home_city": 0, "media": 0}
+    assert res["flagged"] == {"home_country": 0, "home_city": 0, "media": 0, "geography": 0}
     assert db_session.query(Place).filter(Place.is_context.is_(True)).count() == 0
 
 
@@ -128,3 +129,97 @@ def test_idempotent_self_corrects_when_dominance_shifts(db_session):
     res = noise_filter.flag_ambient_places(db_session)
     assert res["dominant_city"] is None                     # no city dominates now
     assert _by_name(db_session, "Seoul").is_context is False  # previously-flagged self-corrects
+
+
+# --- Non-dominant geography (the "Busan" case) --------------------------------
+
+
+def test_non_dominant_city_named_as_an_item_is_flagged(db_session):
+    """A city that never clears the dominance threshold is still not a destination.
+
+    "Busan" on a Seoul-heavy collection geocodes onto an area centroid and shows up
+    as a pin among real venues — the dominant-city rule alone never catches it.
+    """
+    for i in range(8):
+        _place(db_session, f"Seoul spot {i}", city="Seoul", country="South Korea")
+    _place(db_session, "Busan", city="Busan", country="South Korea", subcategory="neighborhood")
+    _place(db_session, "Jeju Island", city="Jeju", country="South Korea", subcategory="island")
+    db_session.commit()
+
+    res = noise_filter.flag_ambient_places(db_session)
+    assert res["dominant_city"] == "seoul"                    # Busan is nowhere near dominant
+    assert _by_name(db_session, "Busan").is_context is True
+    # Suffix-stripped so the city label "Jeju" catches the item "Jeju Island"
+    assert _by_name(db_session, "Jeju Island").is_context is True
+
+
+def test_venue_sharing_a_location_name_is_kept(db_session):
+    """The area-subcategory guard: a real venue may share its name with a label.
+
+    "Seoul Forest" is a park that also leaked into one row's neighborhood column;
+    without the guard it would be demoted along with the actual areas.
+    """
+    for i in range(5):
+        _place(db_session, f"Seoul spot {i}", city="Seoul", country="South Korea")
+    _place(db_session, "Seoul Forest", city="Seoul", country="South Korea",
+           neighborhood="Seoul Forest", subcategory="park")
+    _place(db_session, "Gwangjang Market", city="Seoul", country="South Korea",
+           subcategory="market_traditional")
+    db_session.commit()
+
+    noise_filter.flag_ambient_places(db_session)
+    assert _by_name(db_session, "Seoul Forest").is_context is False
+    assert _by_name(db_session, "Gwangjang Market").is_context is False
+
+
+def test_one_off_neighborhood_label_does_not_become_geography(db_session):
+    """A neighborhood label used by a single row is extraction noise, not an area.
+
+    Venue names leak into the neighborhood column one-off; treating them as labels
+    would demote the venue of the same name.
+    """
+    for i in range(5):
+        _place(db_session, f"Seoul spot {i}", city="Seoul", country="South Korea")
+    # Only one row ever uses this as a neighborhood -> below _MIN_LABEL_USES
+    _place(db_session, "Some Venue", city="Seoul", country="South Korea",
+           neighborhood="Miryang Market")
+    _place(db_session, "Miryang Market", city="Seoul", country="South Korea",
+           subcategory="neighborhood")
+    db_session.commit()
+
+    noise_filter.flag_ambient_places(db_session)
+    assert _by_name(db_session, "Miryang Market").is_context is False
+
+    # Once a second row shares the label it is a real area and the item is demoted
+    _place(db_session, "Another Venue", city="Seoul", country="South Korea",
+           neighborhood="Miryang Market")
+    db_session.commit()
+    noise_filter.flag_ambient_places(db_session)
+    assert _by_name(db_session, "Miryang Market").is_context is True
+
+
+def test_label_spanning_multiple_cities_is_a_descriptor_not_an_area(db_session):
+    """"Chinatown" names a kind of district many cities have, so the label describes a
+    type rather than THIS collection's setting. The specific instance stays a
+    destination — the city shown next to it says which one."""
+    for i in range(6):
+        _place(db_session, f"Seoul spot {i}", city="Seoul", country="South Korea")
+    # Used as a neighborhood in two different cities
+    _place(db_session, "Dumpling House", city="Incheon", country="South Korea",
+           neighborhood="Chinatown")
+    _place(db_session, "Bakery", city="Incheon", country="South Korea",
+           neighborhood="Chinatown")
+    _place(db_session, "Noodle Bar", city="New York", country="United States",
+           neighborhood="Chinatown")
+    _place(db_session, "Chinatown", city="Incheon", country="South Korea",
+           subcategory="neighborhood")
+    # A label confined to one city is still ambient geography
+    _place(db_session, "Cafe A", city="Seoul", country="South Korea", neighborhood="Myeongdong")
+    _place(db_session, "Cafe B", city="Seoul", country="South Korea", neighborhood="Myeongdong")
+    _place(db_session, "Myeongdong", city="Seoul", country="South Korea",
+           subcategory="neighborhood")
+    db_session.commit()
+
+    noise_filter.flag_ambient_places(db_session)
+    assert _by_name(db_session, "Chinatown").is_context is False
+    assert _by_name(db_session, "Myeongdong").is_context is True
