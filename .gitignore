@@ -58,3 +58,9 @@ backend/*.log
 
 # Vercel
 .vercel
+
+# FUSE mount leftovers (binary fragments of deleted-while-open files)
+backend/.fuse_hidden*
+
+# Geocode C-gate output (regenerate with scripts/geocode_gate.py)
+gate_results.json
