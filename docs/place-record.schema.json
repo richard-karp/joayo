@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karp.dev/schemas/place-record-1.0.json",
+  "title": "Place record payload",
+  "type": "object",
+  "required": ["contract", "places"],
+  "properties": {
+    "contract": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+    "generated": { "type": "string", "format": "date-time" },
+    "count": { "type": "integer", "minimum": 0 },
+    "places": { "type": "array", "items": { "$ref": "#/$defs/place" } }
+  },
+  "$defs": {
+    "place": {
+      "type": "object",
+      "required": ["id", "name", "category", "source"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "name_local": { "type": "string", "minLength": 1 },
+
+        "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+        "lng": { "type": "number", "minimum": -180, "maximum": 180 },
+        "address": { "type": "string", "minLength": 1 },
+        "country": { "type": "string", "pattern": "^[A-Z]{2}$" },
+        "tz": { "type": "string", "pattern": "^[A-Za-z]+/[A-Za-z_+\\-0-9]+$" },
+        "city": { "type": "string", "minLength": 1 },
+        "neighborhood": { "type": "string", "minLength": 1 },
+
+        "category": { "type": "string" },
+        "subcategory": { "type": "string", "minLength": 1 },
+        "cuisine": { "type": "string", "minLength": 1 },
+        "tags": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "summary": { "type": "string" },
+        "tips": { "type": "string" },
+
+        "hours": {
+          "type": "object",
+          "properties": {
+            "days": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 0, "maximum": 6 },
+              "uniqueItems": true
+            },
+            "by_day": {
+              "type": "array",
+              "minItems": 7,
+              "maxItems": 7,
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": { "type": "integer", "minimum": 0, "maximum": 2880 }
+                }
+              }
+            },
+            "text": { "type": "string" },
+            "irregular": { "const": true }
+          },
+          "additionalProperties": false
+        },
+
+        "rating": {
+          "type": "object",
+          "required": ["value", "scale"],
+          "properties": {
+            "value": { "type": "number" },
+            "scale": { "type": "string", "minLength": 1 },
+            "source": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "price_tier": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "awards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["body", "kind"],
+            "properties": {
+              "body": { "type": "string", "minLength": 1 },
+              "kind": { "type": "string", "minLength": 1 },
+              "value": { "type": ["number", "string"] },
+              "year": { "type": "integer" }
+            },
+            "additionalProperties": false
+          }
+        },
+
+        "source": {
+          "type": "object",
+          "required": ["kind"],
+          "properties": {
+            "kind": { "enum": ["curated", "social", "manual"] },
+            "name": { "type": "string", "minLength": 1 },
+            "urls": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "contributors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["handle"],
+                "properties": {
+                  "handle": { "type": "string", "minLength": 1 },
+                  "platform": { "type": "string", "minLength": 1 },
+                  "url": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            },
+            "first_seen": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+
+        "location_confidence": {
+          "enum": ["address", "poi_id", "name_search", "manual", "none"]
+        },
+        "refs": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+
+        "needs_review": { "const": true },
+        "is_context": { "const": true }
+      },
+      "additionalProperties": true
+    }
+  }
+}
