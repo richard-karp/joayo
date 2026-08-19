@@ -194,7 +194,11 @@ def _kakao_full(location_name: str, expected_city: str | None = None) -> GeoResu
             provider="kakao",
             place_id=chosen.get("id"),
             canonical_name=chosen.get("place_name"),
-            address=chosen.get("address_name") or chosen.get("road_address_name"),
+            # Road address (도로명) first, matching backfill_addresses.py: it is what
+            # non-Kakao providers index well and what a resolvable map link needs. The
+            # jibun (지번) lot address is the fallback. Trailing `or None` keeps an empty
+            # string out of the column — blank must read as UNKNOWN, not as "no address".
+            address=chosen.get("road_address_name") or chosen.get("address_name") or None,
         )
     except Exception:
         pass
