@@ -21,6 +21,7 @@ with engine.connect() as _conn:
         "ALTER TABLE places ADD COLUMN venue_place_id TEXT REFERENCES places(id)",
         "ALTER TABLE places ADD COLUMN geocoder TEXT",
         "ALTER TABLE places ADD COLUMN geocoder_place_id TEXT",
+        "ALTER TABLE places ADD COLUMN address TEXT",
         "ALTER TABLE places ADD COLUMN normalized_name TEXT",
         "ALTER TABLE places ADD COLUMN neighborhood TEXT",
         "ALTER TABLE places ADD COLUMN native_name TEXT",

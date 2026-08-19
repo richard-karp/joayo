@@ -96,11 +96,18 @@ def test_address_reaches_the_api_response(db_session):
     # The column exists so downstream can read it — KFP's promotion export and Taste Stew's
     # googlePlaceUrl both go through PlaceResponse. A column the API drops is still discarded,
     # just one layer later.
-    from schemas import PlaceResponse
+    #
+    # ⛔ Goes through routes.places._to_response, NOT PlaceResponse.model_validate. That
+    # serializer names all 33 fields by hand, so it can silently omit one and every field
+    # on PlaceResponse is Optional-with-default — the omission surfaces as `null`, never as
+    # an error. model_validate reads the ORM attribute directly and therefore cannot fail
+    # the way the real endpoint can; an earlier version of this test asserted against it and
+    # passed while GET /api/places returned address: null for every row.
+    from routes.places import _to_response
 
     raw = make_raw_post()
     pid, _ = find_or_merge_place(
         _extracted(), raw, *SEOUL, "job1", db_session, address=KAKAO_ADDR
     )
-    resp = PlaceResponse.model_validate(db_session.get(Place, pid))
+    resp = _to_response(db_session.get(Place, pid), None)
     assert resp.address == KAKAO_ADDR

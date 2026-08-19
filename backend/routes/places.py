@@ -35,6 +35,7 @@ def _to_response(place: Place, mark: PlaceMark | None) -> PlaceResponse:
         lat=place.lat,
         lng=place.lng,
         geocoder_place_id=place.geocoder_place_id,
+        address=place.address,
         native_name=place.native_name,
         raw_caption=place.raw_caption,
         tagged_accounts=place.tagged_accounts,
