@@ -20,8 +20,11 @@ import json
 import sqlite3
 import sys
 from collections import Counter
+from pathlib import Path
 
-SCHEMA = "place-record.schema.json"
+# Resolved from this file, not the working directory: the schema lives beside the contract
+# in docs/, and the script is normally run from the repo root.
+SCHEMA = Path(__file__).resolve().parent.parent / "docs" / "place-record.schema.json"
 KNOWN_CATEGORIES = {"eat", "see", "do", "shop", "service"}
 
 # Taste Stew's Country union -> ISO 3166-1 alpha-2, and the IANA zone its hours are expressed in.
@@ -229,16 +232,24 @@ def main():
 
     print(f"\nvalidating {len(payload['places'])} places")
 
+    # ⛔ Both failures are non-fatal by design: the rules below are the half of this file with
+    # scar tissue behind them, and losing them because a schema file moved would be the worse
+    # outcome. Each says plainly that shape went unchecked rather than passing silently.
     try:
         import jsonschema
-        schema = json.load(open(a.schema, encoding="utf-8"))
-        v = jsonschema.Draft202012Validator(schema)
-        shape = sorted(v.iter_errors(payload), key=lambda e: list(e.path))[:20]
-        print(f"  schema errors: {len(shape)}" + (" (first 20)" if len(shape) == 20 else ""))
-        for e in shape:
-            print(f"    {'/'.join(str(x) for x in e.path)}: {e.message[:110]}")
     except ImportError:
         print("  (jsonschema not installed — shape unchecked; pip install jsonschema)")
+    else:
+        try:
+            schema = json.load(open(a.schema, encoding="utf-8"))
+        except FileNotFoundError:
+            print(f"  (schema not found at {a.schema} — shape unchecked)")
+        else:
+            v = jsonschema.Draft202012Validator(schema)
+            shape = sorted(v.iter_errors(payload), key=lambda e: list(e.path))[:20]
+            print(f"  schema errors: {len(shape)}" + (" (first 20)" if len(shape) == 20 else ""))
+            for e in shape:
+                print(f"    {'/'.join(str(x) for x in e.path)}: {e.message[:110]}")
 
     errs, warns = extra_rules(payload)
     print(f"  rule errors:   {len(errs)}")
@@ -250,11 +261,16 @@ def main():
     if len(warns) > 12:
         print(f"    … and {len(warns)-12} more")
 
+    total = len(payload["places"])
+    if not total:
+        print("\n  coverage: (payload is empty)")
+        return 1 if errs else 0
+
     print("\n  coverage:")
     for f in ("address", "hours", "tz", "rating", "price_tier", "awards", "cuisine",
               "name_local", "neighborhood", "lat"):
         n = sum(1 for p in payload["places"] if f in p)
-        print(f"    {f:14} {n:5} / {len(payload['places'])}  {100*n/len(payload['places']):5.1f}%")
+        print(f"    {f:14} {n:5} / {total}  {100*n/total:5.1f}%")
     print(f"    {'by source':14} {dict(Counter(p['source']['kind'] for p in payload['places']))}")
     print(f"    {'by category':14} {dict(Counter(p['category'] for p in payload['places']))}")
     print(f"    {'by confidence':14} {dict(Counter(p.get('location_confidence') for p in payload['places']))}")

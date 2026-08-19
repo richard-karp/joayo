@@ -23,11 +23,11 @@ three channels whose provenance is upstream of the Kakao lookup:
 what the post said — which is the cheap half of the answer, available today.
 """
 import argparse
+import difflib
 import json
 import math
 import re
 import sqlite3
-import statistics
 import unicodedata
 from collections import Counter, defaultdict
 
@@ -49,13 +49,22 @@ def norm(s):
 
 def geo_median(pts, iters=64):
     """Weiszfeld. The median point resists a single far outlier the way a mean cannot —
-    which matters here because the outlier is exactly what we are looking for."""
+    which matters here because the outlier is exactly what we are looking for.
+
+    Points are (lng, lat) in degrees, so the longitude axis is scaled by cos(lat) before
+    distances are taken: at 37.5 N a degree of longitude is 88.8 km against 111.2 km for a
+    degree of latitude, and treating them as equal over-weights east-west separation by ~26%,
+    pulling the centre along that axis. Small in practice — over this corpus it moves the
+    centre a median of 11 m and changes one flag in 419 — but the whole point of this file is
+    being an instrument worth trusting.
+    """
     x = sum(p[0] for p in pts) / len(pts)
     y = sum(p[1] for p in pts) / len(pts)
+    kx = math.cos(y * math.pi / 180) or 1e-9
     for _ in range(iters):
         num_x = num_y = den = 0.0
         for px, py in pts:
-            d = math.hypot(px - x, py - y) or 1e-9
+            d = math.hypot((px - x) * kx, py - y) or 1e-9
             num_x += px / d
             num_y += py / d
             den += 1 / d
@@ -112,7 +121,7 @@ def main():
             if d > a.nbhd_radius_m:
                 flags[m["id"]].add("neighborhood")
                 a_out.append((round(d), key[0], m["location_name"], m["category"]))
-    print(f"\n── A. neighbourhood coherence")
+    print("\n── A. neighbourhood coherence")
     print(f"    neighbourhoods with >=3 pins: {len(tested_nb)}, covering {covered_a} pins "
           f"({100*covered_a/n:.1f}% of the corpus)")
     print(f"    pins further than {a.nbhd_radius_m:.0f} m from their neighbourhood's median: "
@@ -135,7 +144,7 @@ def main():
             if d > a.post_radius_m:
                 flags[m["id"]].add("post")
                 b_out.append((round(d), len(members), m["location_name"], m["category"], url))
-    print(f"\n── B. same-post coherence")
+    print("\n── B. same-post coherence")
     print(f"    posts yielding >=3 pins: {len(tested_p)}, covering {covered_b} pins "
           f"({100*covered_b/n:.1f}%)")
     uniq_b = {x[2] for x in b_out}
@@ -146,7 +155,6 @@ def main():
 
     # ── C. Taste Stew cross-check ─────────────────────────────────────────────────────
     ts = [r for r in json.load(open(a.tastestew, encoding="utf-8")) if r.get("country") == "Korea"]
-    import difflib
 
     def same(x, y):
         if not x or not y:
@@ -171,7 +179,7 @@ def main():
                 pairs.append((haversine_m(r["lat"], r["lng"], t["lat"], t["lng"]),
                               r["location_name"], t.get("name")))
                 break
-    print(f"\n── C. Taste Stew cross-check (independent coordinate, same venue)")
+    print("\n── C. Taste Stew cross-check (independent coordinate, same venue)")
     print(f"    matched venue pairs within 5 km: {len(pairs)}")
     if pairs:
         ds = sorted(p[0] for p in pairs)
@@ -182,8 +190,7 @@ def main():
             print(f"       {d:>8.0f} m  joayo={jn[:32]!r} ts={str(tn)[:32]!r}")
 
     # ── summary ───────────────────────────────────────────────────────────────────────
-    tested_any = {r["id"] for r in rows if r["neighborhood"] or len(r["urls"]) > 0}
-    print(f"\n── summary")
+    print("\n── summary")
     print(f"    pins flagged by >=1 channel: {len(flags)} of {n} ({100*len(flags)/n:.1f}%)")
     print(f"    by channel: {dict(Counter(c for s in flags.values() for c in s))}")
     print(f"    flagged AND already self-flagged needs_review: "

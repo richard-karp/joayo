@@ -16,7 +16,8 @@ from pathlib import Path
 
 def main() -> int:
     if len(sys.argv) < 2:
-        return print(__doc__) or 2
+        print(__doc__)
+        return 2
     db = Path(sys.argv[1])
     if not db.exists():
         sys.exit(f"no such database: {db}")
@@ -33,6 +34,11 @@ def main() -> int:
 
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     backup = db.with_suffix(db.suffix + f".pre-address-{stamp}")
+    # ⛔ Checkpoint first. The app runs in WAL mode (see the -wal/-shm entries in .gitignore),
+    # so committed transactions can still be sitting in places.db-wal — and copying the main
+    # file alone would leave them out of the backup that is this step's entire justification.
+    # No-op on a non-WAL database.
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     shutil.copy2(db, backup)
     print(f"backup: {backup.name}")
 

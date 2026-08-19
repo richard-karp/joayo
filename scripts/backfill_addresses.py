@@ -22,6 +22,7 @@ Usage:
     # or leave the key in .env beside the repo root and pass --env path/to/.env
 """
 import argparse
+import json
 import os
 import sqlite3
 import sys

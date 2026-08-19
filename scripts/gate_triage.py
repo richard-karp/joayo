@@ -122,6 +122,11 @@ def main():
     judged = [r for r in rows if r["bucket"] in ("AGREE", "CLOSE", "MARGINAL", "DISAGREE")]
 
     print(f"sample {len(rows)}, Google could judge {len(judged)}, disagreed on {len(bad)}")
+    if not judged:
+        # Every row is NO_RESULT / GOOGLE_MISS / ERROR — the gate returned nothing to triage.
+        # `bad` is a subset of `judged`, so there is no classification to do either.
+        print("  nothing to triage: Google could judge no rows in this run")
+        return 0
     groups = Counter()
     for r in bad:
         r["_class"] = classify(r)

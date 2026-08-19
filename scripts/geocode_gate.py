@@ -20,8 +20,8 @@ Buckets use KFP's own 150 m anchor threshold as the top band.
 """
 import argparse
 import json
+import difflib
 import math
-import os
 import random
 import re
 import sqlite3
@@ -64,7 +64,6 @@ def norm(s: str | None) -> str:
 
 
 def name_sim(a: str, b: str) -> float:
-    import difflib
     if not a or not b:
         return 0.0
     ratio = difflib.SequenceMatcher(None, a, b).ratio()
@@ -159,7 +158,8 @@ def main() -> int:
         SELECT id, location_name, native_name, city, neighborhood, lat, lng,
                category, subcategory, geocoder_place_id, needs_review, is_context
         FROM places
-        WHERE is_place = 1 AND lat IS NOT NULL AND country = 'South Korea'
+        WHERE is_place = 1 AND lat IS NOT NULL AND lng IS NOT NULL
+          AND country = 'South Korea'
     """)]
     population = len(rows)
 
