@@ -97,6 +97,7 @@ class PlaceResponse(BaseModel):
     lat: Optional[float]
     lng: Optional[float]
     geocoder_place_id: Optional[str] = None  # Kakao POI id — powers "Open in Kakao Map" links
+    address: Optional[str] = None  # provider's address for the matched POI (authoritative; coords are derived)
     native_name: Optional[str] = None  # local-script (Korean 한글) name — prefill for review re-geocode
     raw_caption: Optional[str]
     tagged_accounts: Optional[list[str]]

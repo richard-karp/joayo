@@ -192,6 +192,7 @@ def run(apply: bool, limit: int | None) -> None:
             p.lng = geo.lng
             p.geocoder = geo.provider
             p.geocoder_place_id = geo.place_id
+            p.address = geo.address
             p.native_name = native
             p.needs_review = needs_review
             if p.city is None and geo.city:

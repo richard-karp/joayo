@@ -325,6 +325,7 @@ def process_job(job_id: str, posts: list[dict], force: bool = False):
                 try:
                     place_geocoder = None
                     place_geocoder_id = None
+                    place_address = None
                     if extracted_place.is_place:
                         cache_key = (extracted_place.location_name,
                                      extracted_place.country, extracted_place.city,
@@ -342,6 +343,7 @@ def process_job(job_id: str, posts: list[dict], force: bool = False):
                         lat, lng = geo.lat, geo.lng
                         place_geocoder = geo.provider
                         place_geocoder_id = geo.place_id
+                        place_address = geo.address
                         # Reconcile the label to the coordinates so the map (plots by
                         # lat/lng) and list (filters by city) can't disagree: fill a
                         # blank city, and when the matched POI's region genuinely
@@ -384,6 +386,7 @@ def process_job(job_id: str, posts: list[dict], force: bool = False):
                         transcript_missing=transcript_missing,
                         geocoder=place_geocoder,
                         geocoder_place_id=place_geocoder_id,
+                        address=place_address,
                     )
                     if extracted_place.is_place:
                         url_place_map[normalize_name(extracted_place.location_name)] = place_id

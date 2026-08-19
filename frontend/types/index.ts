@@ -37,6 +37,7 @@ export interface Place {
   lat: number | null;
   lng: number | null;
   geocoder_place_id: string | null;
+  address: string | null;
   native_name: string | null;
   raw_caption: string | null;
   tagged_accounts: string[] | null;

@@ -56,6 +56,10 @@ class Place(Base):
     lng               = Column(Float, nullable=True)
     geocoder          = Column(String, nullable=True)             # "kakao" | "nominatim"
     geocoder_place_id = Column(String, nullable=True, index=True) # stable external POI id (strongest dedup key)
+    # Provider's address string for the matched POI. Kakao returns this on every keyword
+    # search and it was discarded until now. Nullable because Nominatim results and
+    # pre-existing rows may not carry one — treat absent as UNKNOWN, never as "no address".
+    address           = Column(String, nullable=True)
 
     # Matching helpers
     normalized_name = Column(String, nullable=True, index=True)   # normalized location_name for cheap matching

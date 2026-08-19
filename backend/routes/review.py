@@ -64,6 +64,9 @@ def review_place(place_id: str, body: ReviewRequest, db: Session = Depends(get_d
         place.lng = geo.lng
         place.geocoder = geo.provider
         place.geocoder_place_id = geo.place_id
+        # Overwrite here, unlike the dedup merge: a regeocode is an explicit correction of
+        # this row's coordinates, so the address must move with them or the two disagree.
+        place.address = geo.address
         place.native_name = native
         place.needs_review = needs_review
         if place.city is None and geo.city:

@@ -225,6 +225,7 @@ def find_or_merge_place(
     transcript_missing: bool = False,
     geocoder: str | None = None,
     geocoder_place_id: str | None = None,
+    address: str | None = None,
 ) -> tuple[str, bool]:
     author_entry = _build_author_entry(raw_post)
     existing = _find_match(extracted, lat, lng, session,
@@ -284,6 +285,10 @@ def find_or_merge_place(
             existing.geocoder = geocoder
         if existing.geocoder_place_id is None and geocoder_place_id is not None:
             existing.geocoder_place_id = geocoder_place_id
+        # Fill-only, never overwrite: a row whose address was curated or corrected by hand
+        # must not be reverted by a later post re-geocoding the same venue.
+        if existing.address is None and address is not None:
+            existing.address = address
         if not existing.normalized_name:
             existing.normalized_name = normalize_name(existing.location_name)
         # Upgrade a caption-only place once a transcript-based extraction of the same
@@ -324,6 +329,7 @@ def find_or_merge_place(
         lng=lng,
         geocoder=geocoder,
         geocoder_place_id=geocoder_place_id,
+        address=address,
         raw_caption=raw_post.caption,
         tagged_accounts=raw_post.tagged_accounts,
         transcript=transcript,
