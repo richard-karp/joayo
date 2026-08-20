@@ -64,3 +64,7 @@ backend/.fuse_hidden*
 
 # Geocode C-gate output (regenerate with scripts/geocode_gate.py)
 gate_results.json
+address_backfill_flagged.json
+address_backfill_triaged.json
+neighborhood_gate_results.json
+pregate_results.json
