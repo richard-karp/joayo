@@ -8,23 +8,36 @@ Google gets "CU" and returns whichever of ~18,000 branches its ranking likes. Jo
 runs `_kakao_full` with `expected_city` and actively prefers a branch in the right city. On chains
 the gate is the weaker instrument, and its disagreements are not evidence.
 
-Three classes are separated here:
+Five classes, and only two of them are ever folded into the adjusted rate:
 
-  CHAIN        Google's name carries a Korean branch suffix — 점 / 본점 / 지점 — or Joayo's name
-               carries a branch or neighbourhood token Google's answer does not. Both mean the two
-               providers picked different doors of the same business. Not a mislocation.
+  CHAIN        The provider named a different BRANCH of the same business. Requires the base names
+               to agree once the branch marker is stripped. Folded in — the gate could not pick a
+               branch, Joayo could (`_kakao_full` prefers a hit in `expected_city`).
 
-  NAME_SPLIT   Joayo's own `location_name` and `native_name` point at different venues: the probe
-               (native) matches Google's answer closely while the romanized name does not, or the
-               reverse. ⛔ This is a defect in Joayo, not in the geocode — the extraction produced
-               an inconsistent pair and the geocoder faithfully followed one of them.
+  EXTENT       The venue is a mountain, forest, strait or district — a feature with no single
+               point. Two coordinates 9 km apart on Gyejoksan are both on Gyejoksan. Requires the
+               names to agree. Folded in.
 
-  REVIEW       Everything left. Same name, no branch marker, kilometres apart. This is the
-               population the C-gate actually exists to size.
+  NAME_CHECK   The provider agrees with `native_name`, but `location_name` does not plausibly
+               transliterate it. May be a genuine mismatch (Tachibana / 바위파스타바 are different
+               restaurants) or an innocent loanword (컬러 오브 유 for "Color of You"). A list for
+               human eyes. Folded into NOTHING.
+
+  NO_ANCHOR    No `native_name`, and the provider answered in Hangul with no romanization that
+               anchors it. Identity is not merely unproven, it is UNPROVABLE by this instrument.
+               Excluded from the denominator rather than counted either way. This is the same
+               blindness `review_confidence()` has, and it covers 286 of the corpus's 908 rows.
+
+  REVIEW       Everything left — names agree, no excuse applies, kilometres apart. The population
+               the C-gate exists to size.
+
+⛔ THE GOVERNING RULE: an excusing class may excuse the DISTANCE, never the IDENTITY. Every error
+this classifier makes in the generous direction moves a row out of REVIEW and flatters the
+conclusion, so each fold requires the names to match first.
 
 Usage:  python3 gate_triage.py gate_results.json [--recheck --env ../korean-food-map/.env]
 
-`--recheck` re-probes the REVIEW rows with the venue's `neighborhood` appended. That stays
+`--recheck` re-probes the still-open classes with the venue's `neighborhood` appended. That stays
 independent: `neighborhood` is written by the extraction step and `_kakao_full` never writes it
 back (it sets lat/lng/city/place_id/canonical_name/address and nothing else), so it is upstream of
 the coordinate in exactly the way `city` is not.
@@ -85,28 +98,146 @@ def sim(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio()
 
 
+def names_match(a, b, threshold=0.75):
+    """Do two venue names refer to the same venue?
+
+    Edit distance alone is not enough: a provider routinely APPENDS a qualifier that Joayo omits —
+    성수 against 성수동2가, 마티나 라운지 against 마티나 라운지 인천공항1터미널서편. Those score
+    0.57 and 0.64 and are plainly the same place.
+
+    ⛔ PREFIX containment, not substring. A qualifier is appended in Korean POI naming, never
+    prepended, so requiring a prefix keeps the tolerance tight. Substring would let any short name
+    match anywhere inside a long unrelated one — and every loosening here moves rows OUT of REVIEW,
+    which is the direction that flatters the conclusion.
+    """
+    fa, fb = norm(a).replace(" ", ""), norm(b).replace(" ", "")
+    if not fa or not fb:
+        return False
+    if len(min(fa, fb, key=len)) >= 2 and (fa.startswith(fb) or fb.startswith(fa)):
+        return True
+    return difflib.SequenceMatcher(None, fa, fb).ratio() >= threshold
+
+
+HANGUL_RE = re.compile(r"[가-힣]")
+NAME_AGREE = 0.75
+
+# ── Revised Romanization, approximate ─────────────────────────────────────────────────
+# Enough to answer one question: does `location_name` plausibly transliterate `native_name`?
+# No assimilation rules, no vowel-harmony exceptions — those change a letter or two and this is
+# compared with a fuzzy matcher, not an equality test.
+#
+# ⛔ Needed because comparing a romanized string to a Hangul one with difflib is not a weak test,
+# it is a MEANINGLESS one: the character sets are disjoint, so the ratio is ~0 for a correct pair
+# and ~0 for a wrong one. v3 used exactly that comparison as its NAME_SPLIT trigger and therefore
+# flagged every row whose native name matched the provider — the majority of correct rows.
+_INI = ["g","kk","n","d","tt","r","m","b","pp","s","ss","","j","jj","ch","k","t","p","h"]
+_MED = ["a","ae","ya","yae","eo","e","yeo","ye","o","wa","wae","oe","yo","u","wo","we","wi",
+        "yu","eu","ui","i"]
+_FIN = ["","k","k","k","n","n","n","t","l","k","m","p","t","t","p","l","m","p","p","t","t",
+        "ng","t","t","k","t","p","t"]
+
+
+def romanize(s: str) -> str:
+    """Hangul -> approximate Revised Romanization. Non-Hangul passes through."""
+    out = []
+    for ch in s or "":
+        c = ord(ch) - 0xAC00
+        if 0 <= c < 11172:
+            out.append(_INI[c // 588] + _MED[(c % 588) // 28] + _FIN[c % 28])
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def transliterates(latin: str, hangul: str) -> bool:
+    """Is `latin` a plausible transliteration of `hangul`?
+
+    Containment-tolerant in both directions, because one side routinely carries a qualifier the
+    other omits — "Bijarim Forest" against 비자림 ("bijarim"), "Sihyunhada Photo Studio" against
+    시현하다 ("sihyeonhada").
+
+    ⚠️ Returns False for LOANWORD names: 컬러 오브 유 romanizes to "keolreoobeuyu", which is
+    correct Korean for "Color of You" and matches nothing. That is why the class this feeds is
+    named NAME_CHECK — a row for human eyes — and is never counted as a proven defect.
+    """
+    a = re.sub(r"[^a-z]", "", (latin or "").lower())
+    b = re.sub(r"[^a-z]", "", romanize(hangul or "").lower())
+    if not a or not b:
+        return False
+    if a in b or b in a:
+        return True
+    short = min(len(a), len(b))
+    return difflib.SequenceMatcher(None, a[:short], b[:short]).ratio() >= 0.6
+
+
 def classify(r):
+    """Classify a disagreement.
+
+    ⛔ THE RULE THAT GOVERNS THIS FUNCTION, learned the hard way in v2:
+    an excusing class may excuse the DISTANCE, never the IDENTITY.
+
+    v2 checked EXTENT first, so `Yongmasan` (용마산) resolving to 아차산 — a different mountain on
+    the adjacent ridge — was filed as "the feature has no single point" and folded into the
+    adjusted rate. That is exactly the generous-direction error the 센터 exclusion below refuses
+    to make, reintroduced through the order of checks. A wrong mountain is a wrong answer no
+    matter how large mountains are.
+
+    So CHAIN and EXTENT now both require the names to AGREE first. Only then is the distance
+    excused.
+    """
     g = r.get("g_name") or ""
     jn = r.get("location_name") or ""
-    nat = r.get("native_name") or ""
+    nat = (r.get("native_name") or "").strip()
+    sub = r.get("subcategory") or ""
 
-    # Order matters: EXTENT first, because a mountain whose Google name happens to contain 센터
-    # is not a chain, and a distance threshold is meaningless for it either way.
-    if (r.get("subcategory") or "") in EXTENDED_SUBCATEGORIES:
+    # ⚠️ Compare with whitespace COLLAPSED. Korean POI names differ freely on spacing —
+    # "컬러 오브 유" vs "컬러오브유" — and v1 scored those as different venues, manufacturing
+    # three NAME_SPLITs out of pure typography.
+    flat = lambda s: norm(s).replace(" ", "")
+    # Strip the branch marker before comparing, so "화덕고깃간 방이점" is judged against
+    # "화덕고깃간" rather than being penalised for carrying the very token that identifies it.
+    g_base = BRANCH_RE.sub("", g)
+
+    nat_matches = bool(nat) and (names_match(nat, g) or names_match(nat, g_base))
+    rom_matches = names_match(jn, g) or names_match(jn, g_base)
+
+    # ── NO_ANCHOR ────────────────────────────────────────────────────────────────────────
+    # No native name, and the provider answered in Hangul. A romanized string never matches a
+    # Korean one by edit distance, so identity here is not merely unproven — it is UNPROVABLE by
+    # this instrument. Reported on its own and NEVER folded into the adjusted rate.
+    #
+    # This is the same blindness `review_confidence()` has: it compares native_name to the
+    # provider's canonical name, so with native_name NULL it has nothing to compare — which is
+    # why 0 of the 286 no-native rows in the corpus carry a needs_review flag.
+    if not nat and HANGUL_RE.search(g):
+        # …unless the romanized name transliterates the provider's Hangul one, which establishes
+        # identity without a stored native name and rescues rows like "Hwadeok Gogitgan"
+        # against 화덕고깃간.
+        if not transliterates(jn, g):
+            return "NO_ANCHOR"
+        return "CHAIN" if BRANCH_RE.search(g) else "REVIEW"
+
+    names_agree = nat_matches or rom_matches
+
+    # ── NAME_CHECK ───────────────────────────────────────────────────────────────────────
+    # The provider agrees with `native_name`, but `location_name` does not plausibly transliterate
+    # it — so Joayo's own two name fields may be naming different venues, with the coordinate
+    # following the native one. No recheck can fix this; the question itself is malformed.
+    #
+    # ⚠️ Named CHECK, not SPLIT, and never counted as a proven defect: a loanword name
+    # (컬러 오브 유 for "Color of You") romanizes to nothing like its Latin form and lands here
+    # innocently. This class is a list for human eyes, and it is folded into nothing.
+    if nat_matches and not transliterates(jn, nat):
+        return "NAME_CHECK"
+
+    if not names_agree:
+        # Identity is in doubt. No class may excuse it.
+        return "REVIEW"
+
+    if sub in EXTENDED_SUBCATEGORIES:
         return "EXTENT"
     if BRANCH_RE.search(g) or LATIN_QUAL_RE.search(jn):
         return "CHAIN"
-
-    # ⚠️ Compare with whitespace COLLAPSED, not merely normalized. Korean POI names differ freely
-    # on spacing — "컬러 오브 유" vs "컬러오브유", "카이센동우니도" vs "카이센동 우니도" — and v1
-    # scored those as different names, manufacturing three NAME_SPLITs out of pure typography.
-    flat = lambda s: norm(s).replace(" ", "")
-    s_nat, s_rom = sim(flat(nat), flat(g)), sim(flat(jn), flat(g))
-    if nat and max(s_nat, s_rom) >= 0.75 and min(s_nat, s_rom) < 0.35:
-        # The probe is native_name when present, so a high native match with a low romanized one
-        # means Joayo's OWN two name fields point at different venues, and the coordinate followed
-        # the native one. That is a defect in the extraction, not in the geocode.
-        return "NAME_SPLIT"
     return "REVIEW"
 
 
@@ -123,31 +254,58 @@ def main():
 
     print(f"sample {len(rows)}, Google could judge {len(judged)}, disagreed on {len(bad)}")
     if not judged:
-        # Every row is NO_RESULT / GOOGLE_MISS / ERROR — the gate returned nothing to triage.
-        # `bad` is a subset of `judged`, so there is no classification to do either.
+        # Every row is NO_RESULT / GOOGLE_MISS / ERROR — the gate returned nothing to triage, and
+        # every rate below divides by len(judged). This is not a hypothetical: an expired key, a
+        # quota block or an outage puts every row in ERROR, and that is precisely when the tool
+        # must say so rather than raise. `bad` is a subset of `judged`, so there is also nothing
+        # to classify.
         print("  nothing to triage: Google could judge no rows in this run")
         return 0
     groups = Counter()
     for r in bad:
         r["_class"] = classify(r)
         groups[r["_class"]] += 1
-    for k in ("CHAIN", "EXTENT", "NAME_SPLIT", "REVIEW"):
+    for k in ("CHAIN", "EXTENT", "NAME_CHECK", "NO_ANCHOR", "REVIEW"):
         print(f"    {k:11} {groups[k]:3}")
 
     agree = sum(1 for r in judged if r["bucket"] in ("AGREE", "CLOSE"))
-    # CHAIN and EXTENT are both the gate measuring the wrong thing — a branch it could not pick,
-    # and a feature that has no single point. NAME_SPLIT is a real defect but in the EXTRACTION,
-    # not the geocode, so it is reported separately rather than folded either way.
+    # ⛔ Only CHAIN and EXTENT are folded in, and both now require the NAMES to agree first, so
+    # neither can absorb a wrong venue. NO_ANCHOR is not folded either way — its identity is
+    # unprovable by this instrument, and counting an unprovable row as corroborated is how a
+    # measurement turns into a wish.
     adj = agree + groups["CHAIN"] + groups["EXTENT"]
-    print(f"\n  raw corroboration      {agree}/{len(judged)} = {100*agree/len(judged):.1f}%")
-    print(f"  adjusted               {adj}/{len(judged)} = {100*adj/len(judged):.1f}%")
-    print("    (chain = the gate could not pick a branch; extent = the feature has no single point)")
-    print(f"  extraction defects     {groups['NAME_SPLIT']}/{len(judged)} = "
-          f"{100*groups['NAME_SPLIT']/len(judged):.1f}%  (name fields disagree — fix upstream)")
-    resid = groups["REVIEW"]
-    print(f"  genuinely unexplained  {resid}/{len(judged)} = {100*resid/len(judged):.1f}%")
+    unprov = groups["NO_ANCHOR"]
+    denom_prov = len(judged) - unprov
 
-    for k in ("EXTENT", "NAME_SPLIT", "REVIEW"):
+    def ci95(k, n):
+        """Wilson interval — the normal approximation is nonsense at k=3, which is where this
+        number actually lives."""
+        if n == 0:
+            return (0.0, 0.0)
+        z, p = 1.96, k / n
+        d = 1 + z * z / n
+        c = (p + z * z / (2 * n)) / d
+        h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d
+        return (max(0.0, c - h) * 100, min(1.0, c + h) * 100)
+
+    print(f"\n  raw corroboration      {agree}/{len(judged)} = {100*agree/len(judged):.1f}%")
+    print(f"  adjusted               {adj}/{denom_prov} = {100*adj/max(denom_prov,1):.1f}%"
+          f"   (of rows whose identity is provable)")
+    print("    (chain = branch not pickable; extent = no single point — BOTH require name agreement)")
+    print(f"  identity unprovable    {unprov}/{len(judged)} = {100*unprov/len(judged):.1f}%"
+          f"   (no native_name vs a Hangul result)")
+    nchk = groups["NAME_CHECK"]
+    print(f"  name-field checks      {nchk}/{len(judged)} = {100*nchk/len(judged):.1f}%"
+          f"   (romanized name may not match native — human check, folded into nothing)")
+    resid = groups["REVIEW"]
+    lo, hi = ci95(resid, denom_prov)
+    print(f"  genuinely unexplained  {resid}/{denom_prov} = {100*resid/max(denom_prov,1):.1f}%"
+          f"   95% CI {lo:.1f}–{hi:.1f}%")
+    if resid <= 5:
+        print(f"    ⚠ that rests on {resid} rows. The interval is what the sample supports; the "
+              f"point estimate is not.")
+
+    for k in ("EXTENT", "NAME_CHECK", "NO_ANCHOR", "REVIEW"):
         sub = [r for r in bad if r["_class"] == k]
         if not sub:
             continue
@@ -177,8 +335,17 @@ def main():
              + math.cos(la1 * r) * math.cos(la2 * r) * math.sin((lo2 - lo1) * r / 2) ** 2)
         return R * 2 * math.asin(math.sqrt(x))
 
-    targets = [r for r in bad if r["_class"] in ("REVIEW", "NAME_SPLIT") and r.get("neighborhood")]
-    print(f"\n── recheck with neighbourhood ({len(targets)} of {len(bad)} have one)")
+    # ⚠️ The denominator is the CLASS-ELIGIBLE set, not every disagreement. v2 printed
+    # "N of {len(bad)} have one", which read as "only 4 of 25 disagreements carry a
+    # neighbourhood" when 16 of 25 do — what excluded the rest was this class filter. Reporting a
+    # filter's effect as a coverage gap understates a field that is actually well populated.
+    eligible = [r for r in bad if r["_class"] in ("REVIEW", "NAME_CHECK", "NO_ANCHOR")]
+    targets = [r for r in eligible if r.get("neighborhood")]
+    with_nb = sum(1 for r in bad if r.get("neighborhood"))
+    print(f"\n── recheck with neighbourhood")
+    print(f"   eligible classes: {len(eligible)} of {len(bad)} disagreements; "
+          f"{len(targets)} of those carry a neighbourhood "
+          f"({with_nb} of all {len(bad)} do)")
     improved = still = 0
     for r in targets:
         probe = (r.get("native_name") or r["location_name"]).strip()
